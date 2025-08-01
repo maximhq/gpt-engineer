@@ -35,6 +35,14 @@ from gpt_engineer.benchmark.bench_config import BenchConfig
 from gpt_engineer.benchmark.benchmarks.load import get_benchmark
 from gpt_engineer.benchmark.run import export_yaml_results, print_results, run
 
+# Import observability
+try:
+    from gpt_engineer.core.maxim_observability import init_observability
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
+
 app = typer.Typer(
     context_settings={"help_option_names": ["-h", "--help"]}
 )  # creates a CLI app
@@ -116,6 +124,50 @@ def main(
     if use_cache:
         set_llm_cache(SQLiteCache(database_path=".langchain.db"))
     load_env_if_needed()
+
+    # Initialize observability for benchmark runs
+    observability = None
+    session_id = None
+
+    if OBSERVABILITY_AVAILABLE:
+        try:
+            import sys
+
+            from pathlib import Path
+            from uuid import uuid4
+
+            observability = init_observability(enabled=True)
+
+            if observability.is_enabled():
+                session_id = str(uuid4())
+
+                session_tags = {
+                    "agent_path": path_to_agent,
+                    "bench_config": str(Path(bench_config).name),
+                    "use_cache": str(use_cache),
+                    "python_version": sys.version.split()[0],
+                    "gpt_engineer_invocation": "benchmark",
+                }
+
+                session_metadata = {
+                    "benchmark_args": {
+                        "path_to_agent": path_to_agent,
+                        "bench_config": bench_config,
+                        "yaml_output": yaml_output,
+                        "verbose": verbose,
+                        "use_cache": use_cache,
+                    }
+                }
+
+                observability.start_session(
+                    session_id=session_id, tags=session_tags, metadata=session_metadata
+                )
+
+                print(f"Started Maxim benchmark session: {session_id}")
+
+        except Exception as e:
+            print(f"Failed to initialize observability: {e}")
+
     config = BenchConfig.from_toml(bench_config)
     print("using config file: " + bench_config)
     benchmarks = list()
@@ -126,28 +178,103 @@ def main(
             if specific_config.active:
                 benchmarks.append(specific_config_name)
 
-    for benchmark_name in benchmarks:
-        benchmark = get_benchmark(benchmark_name, config)
-        if len(benchmark.tasks) == 0:
-            print(
-                benchmark_name
-                + " was skipped, since no tasks are specified. Increase the number of tasks in the config file at: "
-                + bench_config
-            )
-            continue
-        agent = get_agent(path_to_agent)
+    try:
+        for benchmark_name in benchmarks:
+            benchmark = get_benchmark(benchmark_name, config)
+            if len(benchmark.tasks) == 0:
+                print(
+                    benchmark_name
+                    + " was skipped, since no tasks are specified. Increase the number of tasks in the config file at: "
+                    + bench_config
+                )
+                continue
 
-        results = run(agent, benchmark, verbose=verbose)
-        print(
-            f"\n--- Results for agent {path_to_agent}, benchmark: {benchmark_name} ---"
-        )
-        print_results(results)
-        print()
-        benchmark_results[benchmark_name] = {
-            "detailed": [result.to_dict() for result in results]
-        }
-    if yaml_output is not None:
-        export_yaml_results(yaml_output, benchmark_results, config.to_dict())
+            # Start trace for this benchmark
+            trace_id = None
+            if observability and observability.is_enabled():
+                trace_id = str(uuid4())
+
+                trace_tags = {
+                    "benchmark_name": benchmark_name,
+                    "agent_path": path_to_agent,
+                    "task_count": str(len(benchmark.tasks)),
+                    "operation": "benchmark_run",
+                }
+
+                trace_metadata = {
+                    "benchmark_config": getattr(config, benchmark_name).__dict__
+                    if hasattr(config, benchmark_name)
+                    else {},
+                    "task_list": [
+                        task.name if hasattr(task, "name") else str(task)
+                        for task in benchmark.tasks[:10]
+                    ],  # First 10 tasks
+                }
+
+                observability.start_trace(
+                    trace_id=trace_id,
+                    name=f"Benchmark: {benchmark_name}",
+                    tags=trace_tags,
+                    metadata=trace_metadata,
+                    session_id=session_id,
+                )
+
+                observability.set_trace_input(
+                    f"Running {len(benchmark.tasks)} tasks for benchmark {benchmark_name}"
+                )
+
+            agent = get_agent(path_to_agent)
+
+            results = run(agent, benchmark, verbose=verbose)
+            print(
+                f"\n--- Results for agent {path_to_agent}, benchmark: {benchmark_name} ---"
+            )
+            print_results(results)
+            print()
+            benchmark_results[benchmark_name] = {
+                "detailed": [result.to_dict() for result in results]
+            }
+
+            # End trace for this benchmark
+            if observability and observability.is_enabled() and trace_id:
+                # Calculate summary statistics
+                total_tasks = len(results)
+                passed_tasks = sum(
+                    1
+                    for result in results
+                    if hasattr(result, "passed") and result.passed
+                )
+
+                output_summary = {
+                    "total_tasks": total_tasks,
+                    "passed_tasks": passed_tasks,
+                    "success_rate": (passed_tasks / total_tasks)
+                    if total_tasks > 0
+                    else 0,
+                    "benchmark_name": benchmark_name,
+                }
+
+                observability.set_trace_output(str(output_summary))
+                print(f"🔍 Trace Output Set: {output_summary}")
+                observability.end_trace(trace_id)
+
+        if yaml_output is not None:
+            export_yaml_results(yaml_output, benchmark_results, config.to_dict())
+
+    finally:
+        # Cleanup observability resources
+        if observability and observability.is_enabled():
+            try:
+                # End session
+                if session_id:
+                    observability.end_session()
+
+                # Cleanup SDK
+                observability.cleanup()
+                print("Maxim benchmark observability cleanup completed")
+
+            except Exception as e:
+                print(f"Failed to cleanup benchmark observability: {e}")
 
 
 if __name__ == "__main__":

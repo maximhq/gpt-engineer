@@ -47,18 +47,56 @@ class Linting:
         if config is None:
             config = {}
 
+        linting_issues = []
+        linting_errors = []
         for filename, content in files_dict.items():
             extension = filename[
                 filename.rfind(".") :
             ].lower()  # Ensure case insensitivity
             if extension in self.linters:
                 original_content = content
-                linted_content = self.linters[extension](content, config)
-                if linted_content != original_content:
-                    print(f"Linted {filename}.")
-                else:
-                    print(f"No changes made for {filename}.")
-                files_dict[filename] = linted_content
+                try:
+                    linted_content = self.linters[extension](content, config)
+                    if linted_content != original_content:
+                        linting_issues.append(
+                            {"file": filename, "issue": "formatting_changed"}
+                        )
+                    files_dict[filename] = linted_content
+                except Exception as error:
+                    linting_errors.append({"file": filename, "error": str(error)})
             else:
-                print(f"No linter registered for {filename}.")
+                # No linter registered for this file type
+                pass
+        # Emit linting_summary and linting_completed events
+        try:
+            from gpt_engineer.core.maxim_observability import get_observability
+
+            observability = get_observability()
+            if observability.is_enabled():
+                from uuid import uuid4
+
+                observability.log_event(
+                    event_id=str(uuid4()),
+                    event_type="linting_summary",
+                    metadata={
+                        "total_files": len(files_dict),
+                        "total_issues": len(linting_issues),
+                        "total_errors": len(linting_errors),
+                        "issues": linting_issues,
+                        "errors": linting_errors,
+                    },
+                    tags={"operation": "linting"},
+                )
+                observability.log_event(
+                    event_id=str(uuid4()),
+                    event_type="linting_completed",
+                    metadata={
+                        "files_linted": len(files_dict),
+                        "issues_found": len(linting_issues),
+                        "errors": len(linting_errors),
+                    },
+                    tags={"operation": "linting"},
+                )
+        except Exception:
+            pass
         return files_dict

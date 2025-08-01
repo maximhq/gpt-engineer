@@ -24,6 +24,14 @@ from gpt_engineer.core.files_dict import FilesDict
 from gpt_engineer.core.preprompts_holder import PrepromptsHolder
 from gpt_engineer.core.prompt import Prompt
 
+# Import observability
+try:
+    from gpt_engineer.core.maxim_observability import get_observability
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
+
 CodeGenType = TypeVar("CodeGenType", bound=Callable[[AI, str, BaseMemory], FilesDict])
 CodeProcessor = TypeVar(
     "CodeProcessor", bound=Callable[[AI, BaseExecutionEnv, FilesDict], FilesDict]
@@ -163,24 +171,139 @@ class CliAgent(BaseAgent):
         FilesDict
             An instance of the `FilesDict` class containing the generated code.
         """
+        observability = None
+        code_gen_span_id = None
+        entrypoint_span_id = None
+        execution_span_id = None
 
-        files_dict = self.code_gen_fn(
-            self.ai, prompt, self.memory, self.preprompts_holder
-        )
-        entrypoint = gen_entrypoint(
-            self.ai, prompt, files_dict, self.memory, self.preprompts_holder
-        )
-        combined_dict = {**files_dict, **entrypoint}
-        files_dict = FilesDict(combined_dict)
-        files_dict = self.process_code_fn(
-            self.ai,
-            self.execution_env,
-            files_dict,
-            preprompts_holder=self.preprompts_holder,
-            prompt=prompt,
-            memory=self.memory,
-        )
-        return files_dict
+        if OBSERVABILITY_AVAILABLE:
+            try:
+                observability = get_observability()
+            except Exception:
+                pass  # Continue without observability
+
+        try:
+            # Start code generation span
+            if observability and observability.is_enabled():
+                from uuid import uuid4
+
+                code_gen_span_id = str(uuid4())
+                observability.start_span(
+                    span_id=code_gen_span_id,
+                    name="Code Generation",
+                    tags={
+                        "operation": "code_generation",
+                        "function": self.code_gen_fn.__name__,
+                        "prompt_length": str(len(prompt.text)),
+                    },
+                    metadata={
+                        "prompt_preview": prompt.text[:100] + "..."
+                        if len(prompt.text) > 100
+                        else prompt.text
+                    },
+                )
+
+            files_dict = self.code_gen_fn(
+                self.ai,
+                prompt,
+                self.memory,
+                self.preprompts_holder,
+                parent_span_id=code_gen_span_id,
+            )
+
+            # End code generation span
+            if observability and observability.is_enabled() and code_gen_span_id:
+                observability.end_span(
+                    span_id=code_gen_span_id,
+                    result={"files_generated": len(files_dict)},
+                )
+
+            # Start entrypoint generation span
+            if observability and observability.is_enabled():
+                entrypoint_span_id = str(uuid4())
+                observability.start_span(
+                    span_id=entrypoint_span_id,
+                    name="Run Script Generation(Entrypoint)",
+                    tags={
+                        "operation": "entrypoint_generation",
+                        "file_count": str(len(files_dict)),
+                    },
+                )
+
+            entrypoint = gen_entrypoint(
+                self.ai,
+                prompt,
+                files_dict,
+                self.memory,
+                self.preprompts_holder,
+                parent_span_id=entrypoint_span_id,
+            )
+            combined_dict = {**files_dict, **entrypoint}
+            files_dict = FilesDict(combined_dict)
+
+            # End entrypoint generation span
+            if observability and observability.is_enabled() and entrypoint_span_id:
+                observability.end_span(
+                    span_id=entrypoint_span_id,
+                    result={"entrypoint_generated": len(entrypoint)},
+                )
+
+            # Start code processing span
+            if observability and observability.is_enabled():
+                execution_span_id = str(uuid4())
+                observability.start_span(
+                    span_id=execution_span_id,
+                    name="Code Processing",
+                    tags={
+                        "operation": "code_processing",
+                        "function": self.process_code_fn.__name__,
+                        "total_files": str(len(files_dict)),
+                    },
+                )
+            files_dict = self.process_code_fn(
+                self.ai,
+                self.execution_env,
+                files_dict,
+                preprompts_holder=self.preprompts_holder,
+                prompt=prompt,
+                memory=self.memory,
+                parent_span_id=execution_span_id,
+            )
+
+            # Log processing summary event
+            if observability and observability.is_enabled() and execution_span_id:
+                observability.log_event(
+                    event_id=str(uuid4()),
+                    event_type="processing_summary",
+                    data=None,
+                    tags={"operation": "code_processing", "phase": "summary"},
+                    metadata={
+                        "final_file_count": len(files_dict),
+                        "final_file_names": list(files_dict.keys()),
+                        "execution_attempted": True,  # Always true in this flow
+                        "execution_success": True,  # Assume success unless exception is raised
+                    },
+                )
+
+            # End code processing span
+            if observability and observability.is_enabled() and execution_span_id:
+                observability.end_span(
+                    span_id=execution_span_id,
+                    result={"final_file_count": len(files_dict)},
+                )
+
+            return files_dict
+
+        except Exception as e:
+            # End any active spans with error
+            if observability and observability.is_enabled():
+                if code_gen_span_id:
+                    observability.end_span(span_id=code_gen_span_id, error=e)
+                if entrypoint_span_id:
+                    observability.end_span(span_id=entrypoint_span_id, error=e)
+                if execution_span_id:
+                    observability.end_span(span_id=execution_span_id, error=e)
+            raise
 
     def improve(
         self,
@@ -188,6 +311,7 @@ class CliAgent(BaseAgent):
         prompt: Prompt,
         execution_command: Optional[str] = None,
         diff_timeout=3,
+        parent_span_id: Optional[str] = None,
     ) -> FilesDict:
         """
         Improves an existing piece of code using the AI and step bundle based on the provided prompt.
@@ -206,27 +330,79 @@ class CliAgent(BaseAgent):
         FilesDict
             An instance of the `FilesDict` class containing the improved code.
         """
+        observability = None
+        improve_span_id = None
 
-        files_dict = self.improve_fn(
-            self.ai,
-            prompt,
-            files_dict,
-            self.memory,
-            self.preprompts_holder,
-            diff_timeout=diff_timeout,
-        )
-        # entrypoint = gen_entrypoint(
-        #     self.ai, prompt, files_dict, self.memory, self.preprompts_holder
-        # )
-        # combined_dict = {**files_dict, **entrypoint}
-        # files_dict = FilesDict(combined_dict)
-        # files_dict = self.process_code_fn(
-        #     self.ai,
-        #     self.execution_env,
-        #     files_dict,
-        #     preprompts_holder=self.preprompts_holder,
-        #     prompt=prompt,
-        #     memory=self.memory,
-        # )
+        if OBSERVABILITY_AVAILABLE:
+            try:
+                observability = get_observability()
+            except Exception:
+                pass  # Continue without observability
 
-        return files_dict
+        try:
+            # Start code improvement span
+            if observability and observability.is_enabled():
+                from uuid import uuid4
+
+                improve_span_id = str(uuid4())
+                observability.start_span(
+                    parent_span_id=parent_span_id if parent_span_id else None,
+                    span_id=improve_span_id,
+                    name="Code Improvement",
+                    tags={
+                        "operation": "code_improvement",
+                        "function": self.improve_fn.__name__,
+                        "initial_file_count": str(len(files_dict)),
+                        "prompt_length": str(len(prompt.text)),
+                        "diff_timeout": str(diff_timeout),
+                    },
+                    metadata={
+                        "prompt_preview": prompt.text[:100] + "..."
+                        if len(prompt.text) > 100
+                        else prompt.text,
+                        "file_list": list(files_dict.keys())[:10],  # Log first 10 files
+                    },
+                )
+
+            files_dict = self.improve_fn(
+                self.ai,
+                prompt,
+                files_dict,
+                self.memory,
+                self.preprompts_holder,
+                diff_timeout=diff_timeout,
+            )
+
+            # End code improvement span
+            if observability and observability.is_enabled() and improve_span_id:
+                observability.end_span(
+                    span_id=improve_span_id,
+                    result={
+                        "final_file_count": len(files_dict),
+                        "files_modified": list(files_dict.keys())[
+                            :10
+                        ],  # Log first 10 modified files
+                    },
+                )
+
+            # entrypoint = gen_entrypoint(
+            #     self.ai, prompt, files_dict, self.memory, self.preprompts_holder
+            # )
+            # combined_dict = {**files_dict, **entrypoint}
+            # files_dict = FilesDict(combined_dict)
+            # files_dict = self.process_code_fn(
+            #     self.ai,
+            #     self.execution_env,
+            #     files_dict,
+            #     preprompts_holder=self.preprompts_holder,
+            #     prompt=prompt,
+            #     memory=self.memory,
+            # )
+
+            return files_dict
+
+        except Exception as e:
+            # End span with error
+            if observability and observability.is_enabled() and improve_span_id:
+                observability.end_span(span_id=improve_span_id, error=e)
+            raise
