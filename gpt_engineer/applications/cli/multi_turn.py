@@ -314,9 +314,7 @@ Examples:
         print(f"\n🚀 Executing {mode} mode...")
 
         try:
-            if mode == "clarify":
-                files_dict = self._execute_clarify_mode(prompt)
-            elif mode == "debug":
+            if mode == "debug":
                 files_dict = self._execute_debug_mode(prompt)
             elif mode == "improve":
                 files_dict = self._execute_improve_mode(prompt)
@@ -343,110 +341,6 @@ Examples:
                         "prompt_length": len(prompt.text),
                     },
                     tags={"error_type": "mode_execution_error", "mode": mode},
-                )
-
-            # Return current files as fallback
-            return self.current_files
-
-    def _execute_clarify_mode(self, prompt: Prompt) -> FilesDict:
-        """Execute clarify mode - discuss requirements before implementation."""
-        print("💬 Clarify mode: Engaging in discussion about requirements...")
-
-        # Initialize observability variables
-        observability = None
-        clarify_span_id = None
-
-        if OBSERVABILITY_AVAILABLE:
-            try:
-                observability = get_observability()
-            except Exception:
-                pass  # Continue without observability
-
-        try:
-            # Start clarify mode span
-            if observability and observability.is_enabled():
-                from uuid import uuid4
-
-                clarify_span_id = str(uuid4())
-                observability.start_span(
-                    span_id=clarify_span_id,
-                    name="Clarify Mode",
-                    tags={
-                        "operation": "clarify_mode",
-                        "prompt_length": str(len(prompt.text)),
-                    },
-                    metadata={
-                        "prompt_preview": prompt.text[:200] + "..."
-                        if len(prompt.text) > 200
-                        else prompt.text,
-                    },
-                )
-
-            # Check if we have existing files to provide context
-            if self.current_files:
-                print(
-                    f"📁 Clarifying requirements in context of {len(self.current_files)} existing files..."
-                )
-
-                # Create a context-aware prompt that includes existing files
-                context_prompt = Prompt(
-                    f"{prompt.text}\n\n"
-                    f"Note: This project already has the following files:\n"
-                    f"{chr(10).join([f'- {file_path}' for file_path in self.current_files.keys()])}\n"
-                    f"Please discuss requirements and clarifications in the context of these existing files."
-                )
-
-                # Use the clarified_gen function with context-aware prompt
-                files_dict = clarified_gen(
-                    self.ai, context_prompt, self.memory, self.preprompts_holder
-                )
-
-                # Merge with existing files instead of overwriting
-                merged_files = FilesDict({**self.current_files, **files_dict})
-
-                # Apply the merged files
-                self.files.push(merged_files)
-                self.current_files = merged_files
-
-                print("✅ Clarification completed, merged with existing files")
-
-            else:
-                print("🆕 Clarifying requirements for new project...")
-
-                # Use the original clarified_gen function for new projects
-                files_dict = clarified_gen(
-                    self.ai, prompt, self.memory, self.preprompts_holder
-                )
-
-                # Apply the files
-                self.files.push(files_dict)
-                self.current_files = files_dict
-
-            # End clarify mode span
-            if observability and observability.is_enabled() and clarify_span_id:
-                observability.end_span(
-                    span_id=clarify_span_id,
-                    result={"files_generated": len(files_dict)},
-                )
-
-            return files_dict
-
-        except Exception as e:
-            print(f"⚠️  Error in clarify mode: {e}")
-
-            # End span with error
-            if observability and observability.is_enabled() and clarify_span_id:
-                observability.end_span(span_id=clarify_span_id, error=e)
-
-            # Log clarify mode error
-            if self.observability and self.observability.is_enabled():
-                self.observability.log_error(
-                    error=e,
-                    context={
-                        "operation": "clarify_mode",
-                        "prompt_length": len(prompt.text),
-                    },
-                    tags={"error_type": "clarify_mode_error"},
                 )
 
             # Return current files as fallback
@@ -502,6 +396,54 @@ Examples:
                 preprompts_holder=self.preprompts_holder,
                 memory=self.memory,
             )
+
+            if OBSERVABILITY_AVAILABLE and files_dict:
+                        try:
+                            observability = get_observability()
+                            if observability and observability.is_enabled():
+                                # Attach each generated file to the current trace
+                                for filename, content in files_dict.items():
+                                    try:
+                                        # Determine MIME type based on file extension
+                                        mime_type = None
+                                        if filename.endswith(".py"):
+                                            mime_type = "text/x-python"
+                                        elif filename.endswith(".js"):
+                                            mime_type = "text/javascript"
+                                        elif filename.endswith(".html"):
+                                            mime_type = "text/html"
+                                        elif filename.endswith(".css"):
+                                            mime_type = "text/css"
+                                        elif filename.endswith(".json"):
+                                            mime_type = "application/json"
+                                        elif filename.endswith(".md"):
+                                            mime_type = "text/markdown"
+                                        elif filename.endswith(".txt"):
+                                            mime_type = "text/plain"
+                                        elif filename.endswith(".toml"):
+                                            mime_type = "text/x-toml"
+                                        elif filename.endswith(".yml") or filename.endswith(
+                                            ".yaml"
+                                        ):
+                                            mime_type = "text/x-yaml"
+                                        else:
+                                            mime_type = "text/plain"
+
+                                        # Add file attachment to the current trace
+                                        observability.add_file_attachment(
+                                            filename=filename,
+                                            content=content,
+                                            mime_type=mime_type,
+                                            target="trace"
+                                        )
+                                        print(f"📎 Attached {filename} to trace")
+                                    except Exception as e:
+                                        print(
+                                            f"⚠️  Failed to attach {filename} to trace: {e}"
+                                        )
+                        except Exception as e:
+                            print(f"⚠️  Failed to attach files to trace: {e}")
+
 
             # Apply the files
             self.files.push(files_dict)
@@ -560,6 +502,53 @@ Examples:
                 self.current_files,
                 diff_timeout=3,
             )
+
+            if OBSERVABILITY_AVAILABLE and files_dict:
+                try:
+                    observability = get_observability()
+                    if observability and observability.is_enabled():
+                        # Attach each generated file to the current trace
+                        for filename, content in files_dict.items():
+                            try:
+                                # Determine MIME type based on file extension
+                                mime_type = None
+                                if filename.endswith(".py"):
+                                    mime_type = "text/x-python"
+                                elif filename.endswith(".js"):
+                                    mime_type = "text/javascript"
+                                elif filename.endswith(".html"):
+                                    mime_type = "text/html"
+                                elif filename.endswith(".css"):
+                                    mime_type = "text/css"
+                                elif filename.endswith(".json"):
+                                    mime_type = "application/json"
+                                elif filename.endswith(".md"):
+                                    mime_type = "text/markdown"
+                                elif filename.endswith(".txt"):
+                                    mime_type = "text/plain"
+                                elif filename.endswith(".toml"):
+                                    mime_type = "text/x-toml"
+                                elif filename.endswith(".yml") or filename.endswith(
+                                    ".yaml"
+                                ):
+                                    mime_type = "text/x-yaml"
+                                else:
+                                    mime_type = "text/plain"
+
+                                # Add file attachment to the current trace
+                                observability.add_file_attachment(
+                                    filename=filename,
+                                    content=content,
+                                    mime_type=mime_type,
+                                    target="trace"
+                                )
+                                print(f"📎 Attached {filename} to trace")
+                            except Exception as e:
+                                print(
+                                    f"⚠️  Failed to attach {filename} to trace: {e}"
+                                )
+                except Exception as e:
+                    print(f"⚠️  Failed to attach files to trace: {e}")
 
             if files_dict is not None:
                 # Apply the files
@@ -764,6 +753,54 @@ Examples:
                 # Merge all files
                 merged_files = FilesDict({**new_files_dict, **entrypoint_files})
                 print(f"✅ Generated {len(merged_files)} total files")
+                # Attach generated files to the current trace
+                if OBSERVABILITY_AVAILABLE and merged_files:
+                    try:
+                        observability = get_observability()
+                        if observability and observability.is_enabled():
+                            # Attach each generated file to the current trace
+                            for filename, content in merged_files.items():
+                                try:
+                                    # Determine MIME type based on file extension
+                                    mime_type = None
+                                    if filename.endswith(".py"):
+                                        mime_type = "text/x-python"
+                                    elif filename.endswith(".js"):
+                                        mime_type = "text/javascript"
+                                    elif filename.endswith(".html"):
+                                        mime_type = "text/html"
+                                    elif filename.endswith(".css"):
+                                        mime_type = "text/css"
+                                    elif filename.endswith(".json"):
+                                        mime_type = "application/json"
+                                    elif filename.endswith(".md"):
+                                        mime_type = "text/markdown"
+                                    elif filename.endswith(".txt"):
+                                        mime_type = "text/plain"
+                                    elif filename.endswith(".toml"):
+                                        mime_type = "text/x-toml"
+                                    elif filename.endswith(".yml") or filename.endswith(
+                                        ".yaml"
+                                    ):
+                                        mime_type = "text/x-yaml"
+                                    else:
+                                        mime_type = "text/plain"
+
+                                    # Add file attachment to the current trace
+                                    observability.add_file_attachment(
+                                        filename=filename,
+                                        content=content,
+                                        mime_type=mime_type,
+                                        target="trace"
+                                    )
+                                    print(f"📎 Attached {filename} to trace")
+                                except Exception as e:
+                                    print(
+                                        f"⚠️  Failed to attach {filename} to trace: {e}"
+                                    )
+                    except Exception as e:
+                        print(f"⚠️  Failed to attach files to trace: {e}")
+
 
                 # Execute the entrypoint (code processing)
                 merged_files = execute_entrypoint(
@@ -1004,55 +1041,6 @@ Examples:
             try:
                 files_dict = self._execute_mode(mode, current_prompt)
 
-                # Attach generated files to the current trace
-                if OBSERVABILITY_AVAILABLE and files_dict and trace_id:
-                    try:
-                        observability = get_observability()
-                        if observability and observability.is_enabled():
-                            # Attach each generated file to the current trace
-                            for filename, content in files_dict.items():
-                                try:
-                                    # Determine MIME type based on file extension
-                                    mime_type = None
-                                    if filename.endswith(".py"):
-                                        mime_type = "text/x-python"
-                                    elif filename.endswith(".js"):
-                                        mime_type = "text/javascript"
-                                    elif filename.endswith(".html"):
-                                        mime_type = "text/html"
-                                    elif filename.endswith(".css"):
-                                        mime_type = "text/css"
-                                    elif filename.endswith(".json"):
-                                        mime_type = "application/json"
-                                    elif filename.endswith(".md"):
-                                        mime_type = "text/markdown"
-                                    elif filename.endswith(".txt"):
-                                        mime_type = "text/plain"
-                                    elif filename.endswith(".toml"):
-                                        mime_type = "text/x-toml"
-                                    elif filename.endswith(".yml") or filename.endswith(
-                                        ".yaml"
-                                    ):
-                                        mime_type = "text/x-yaml"
-                                    else:
-                                        mime_type = "text/plain"
-
-                                    # Add file attachment to the current trace
-                                    observability.add_file_attachment(
-                                        filename=filename,
-                                        content=content,
-                                        mime_type=mime_type,
-                                        target="trace",
-                                        target_id=trace_id,
-                                    )
-                                    print(f"📎 Attached {filename} to trace {trace_id}")
-                                except Exception as e:
-                                    print(
-                                        f"⚠️  Failed to attach {filename} to trace: {e}"
-                                    )
-                    except Exception as e:
-                        print(f"⚠️  Failed to attach files to trace: {e}")
-
                 # Stage changes to git
                 stage_uncommitted_to_git(
                     self.project_path, files_dict, mode == "improve"
@@ -1104,75 +1092,6 @@ Examples:
                 # Ensure files_dict is defined even on error
                 if files_dict is None:
                     files_dict = self.current_files
-
-            # Get next user input
-            next_input = self._get_user_input()
-
-            if next_input is None:
-                print(colored("👋 Ending multi-turn conversation. Goodbye!", "green"))
-                
-                # Set trace output and end trace when user exits
-                if self.observability and self.observability.is_enabled() and trace_id:
-                    # Calculate comprehensive metrics for trace output
-                    total_size = sum(len(content) for content in files_dict.values())
-                    file_types = list(
-                        set(Path(fname).suffix for fname in files_dict.keys())
-                    )
-
-                    # Cost and token information
-                    cost_info = {}
-                    token_info = {}
-                    if self.ai.token_usage_log.is_openai_model():
-                        cost_info = {
-                            "total_cost": self.ai.token_usage_log.usage_cost(),
-                            "currency": "USD",
-                            "model": self.ai.model_name,
-                        }
-                        token_info = {
-                            "total_tokens": self.ai.token_usage_log.total_tokens(),
-                            "cost_per_token": self.ai.token_usage_log.usage_cost()
-                            / max(self.ai.token_usage_log.total_tokens(), 1),
-                        }
-
-                    # Format as markdown
-                    trace_output = f"""# 🎯 Turn {turn_number} Summary
-
-## 📊 Overview
-- **Mode**: {mode.title()}
-- **Files Generated**: {len(files_dict)} files ({total_size:,} characters)
-- **Model Used**: {self.ai.model_name}
-- **Cost**: ${cost_info.get('total_cost', 0):.4f} ({token_info.get('total_tokens', 0):,} tokens)
-
-## 📁 Files by Type
-{chr(10).join([f'- **{ext if ext != "no_extension" else "other"}**: {", ".join(files)}' for ext, files in {ext: [f for f in files_dict.keys() if Path(f).suffix == ext] for ext in file_types}.items()])}
-
-## 🚀 Context
-- **Project Path**: {str(Path(self.project_path).absolute())}
-- **Prompt Length**: {len(current_prompt.text)} characters
-- **Turn Number**: {turn_number}
-- **Total Turns**: {len(self.conversation_history)}
-
----
-*Generated by GPT-Engineer Multi-turn Mode*
-"""
-
-                    self.observability.set_trace_output(trace_output)
-                    print(f"🔍 Trace Output Set: {trace_output}")
-                    self.observability.end_trace(trace_id)
-                
-                # Collect user feedback before ending
-                print("\n" + "=" * 50)
-                print(colored("📝 Session Feedback", "cyan"))
-                print("=" * 50)
-                print("Please provide feedback about your multi-turn session experience:")
-                
-                review = human_review_input(multi_turn=False)  # Enable feedback collection for exit
-                if review:
-                    if self.observability and self.observability.is_enabled():
-                        self.observability.add_session_feedback(review)
-                
-                break
-
             # Set trace output and end trace AFTER confirming user wants to continue
             if self.observability and self.observability.is_enabled() and trace_id:
                 # Calculate comprehensive metrics for trace output
@@ -1222,6 +1141,21 @@ Examples:
                 print(f"🔍 Trace Output Set: {trace_output}")
                 self.observability.end_trace(trace_id)
 
+            next_input = self._get_user_input()
+
+            if next_input is None:
+                print(colored("👋 Ending multi-turn conversation. Goodbye!", "green"))                    # Calculate comprehensive metrics for trace outpu
+                print("\n" + "=" * 50)
+                print(colored("📝 Session Feedback", "cyan"))
+                print("=" * 50)
+                print("Please provide feedback about your multi-turn session experience:")
+                
+                review = human_review_input(multi_turn=False)  # Enable feedback collection for exit
+                if review:
+                    if self.observability and self.observability.is_enabled():
+                        self.observability.add_session_feedback(review)
+                
+                break
             # Create new prompt for next turn
             current_prompt = Prompt(next_input)
 

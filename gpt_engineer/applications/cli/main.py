@@ -1282,6 +1282,8 @@ def execute_gpt_engineer(config: CliConfig) -> None:
                 if trace_id:
                     observability.end_trace(trace_id)
 
+                observability.flush_data()
+                
                 # End session
                 if session_id:
                     observability.end_session()

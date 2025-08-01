@@ -413,43 +413,8 @@ def execute_entrypoint(
         print()
         print(command)
         print()
-
-        # Log user input collection as an event
-        if observability and observability.is_enabled() and user_prompt_span_id:
-            input_start_event_id = str(uuid4())
-            observability.log_event(
-                event_id=input_start_event_id,
-                event_type="user_input_collection",
-                data=None,
-                metadata={
-                    "input_method": "terminal_stdin",
-                    "awaiting_response": True,
-                    "span_id": user_prompt_span_id,
-                },
-                tags={"operation": "user_input_start", "input_type": "confirmation"},
-            )
-
         user_response = input("").lower()
         user_confirmed = user_response in ["", "y", "yes"]
-
-        # Log user response as an event
-        if observability and observability.is_enabled() and user_prompt_span_id:
-            response_event_id = str(uuid4())
-            observability.log_event(
-                event_id=response_event_id,
-                event_type="user_response",
-                data=None,
-                metadata={
-                    "raw_response": user_response,
-                    "confirmed": user_confirmed,
-                    "response_time": datetime.datetime.utcnow().isoformat() + "+00:00",
-                    "span_id": user_prompt_span_id,
-                },
-                tags={
-                    "operation": "user_response_received",
-                    "response_type": "confirmation",
-                },
-            )
 
         # End user prompt span
         if observability and observability.is_enabled() and user_prompt_span_id:

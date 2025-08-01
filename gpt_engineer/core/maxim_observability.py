@@ -152,16 +152,10 @@ class MaximObservability:
             self._log_exception("start_session", e)
             return None
 
-    def end_session(self, feedback: Optional[Dict[str, Any]] = None) -> None:
+    def end_session(self) -> None:
         """
         End the current session.
-
-        Args:
-            feedback: Optional feedback data for the session
         """
-        logger.debug(
-            f"[MaximObservability] end_session called with feedback={feedback}"
-        )
         try:
             if not self.is_enabled() or not self.current_session:
                 logger.debug(
@@ -170,10 +164,6 @@ class MaximObservability:
                 return
 
             try:
-                if feedback:
-                    # Add feedback to session if supported
-                    pass  # Session feedback implementation
-
                 self.current_session.end()
                 self.current_session = None
                 logger.debug("[MaximObservability] Ended session")
@@ -312,6 +302,11 @@ class MaximObservability:
                 logger.debug(
                     f"[MaximObservability] Added Feedback to Maxim session: {self.current_session_id or 'current'}"
                 )
+                
+                # Flush data immediately after adding feedback to ensure it's persisted
+                self.flush_data()
+                logger.debug("[MaximObservability] Data flushed after adding session feedback")
+                
         except Exception as e:
             self._log_exception("add_session_feedback", e)
             return None
@@ -1407,6 +1402,35 @@ class MaximObservability:
             logger.error(f"[MaximObservability] Failed to add file attachment: {e}")
             return None
 
+    def flush_data(self) -> None:
+        """
+        Flush all pending data to ensure it's persisted before session ends.
+        """
+        logger.debug("[MaximObservability] flush_data called")
+        try:
+            if not self.is_enabled():
+                logger.debug(
+                    "[MaximObservability] flush_data: Observability not enabled, skipping flush"
+                )
+                return
+
+            # Flush logger data
+            if self.logger:
+                self.logger.flush()
+                logger.debug("[MaximObservability] Logger data flushed")
+
+            # Flush Maxim SDK data
+            if self.maxim:
+                self.maxim.flush()
+                logger.debug("[MaximObservability] Maxim SDK data flushed")
+
+            logger.debug("[MaximObservability] Data flush completed")
+
+        except Exception as e:
+            logger.error(
+                f"[MaximObservability] Failed to flush data: {e}"
+            )
+
     def cleanup(self) -> None:
         """
         Clean up Maxim resources.
@@ -1433,9 +1457,6 @@ class MaximObservability:
             if self.current_session:
                 self.end_session()
 
-            # Cleanup Maxim SDK
-            if self.logger:
-                self.logger.flush()
 
             if self.maxim:
                 self.maxim.cleanup()

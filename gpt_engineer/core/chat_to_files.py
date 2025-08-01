@@ -28,8 +28,10 @@ from typing import Dict, Tuple
 
 from regex import regex
 
+from gpt_engineer.core.ai import OBSERVABILITY_AVAILABLE
 from gpt_engineer.core.diff import ADD, REMOVE, RETAIN, Diff, Hunk
 from gpt_engineer.core.files_dict import FilesDict, file_to_lines_dict
+from gpt_engineer.core.maxim_observability import get_observability
 
 # Initialize a logger for this module
 logger = logging.getLogger(__name__)
@@ -62,7 +64,6 @@ def chat_to_files_dict(chat: str) -> FilesDict:
 
         # Add the cleaned path and content to the FilesDict
         files_dict[path.strip()] = content.strip()
-
     return files_dict
 
 
