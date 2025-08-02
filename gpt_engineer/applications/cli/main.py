@@ -510,7 +510,24 @@ def execute_gpt_engineer(config: CliConfig) -> None:
     # Handle multi-turn mode
     if config.multi_turn_mode:
         print(colored("🔄 Multi-turn mode activated", "green"))
-        run_multi_turn_mode(ai, config.project_path, preprompts_holder, prompt)
+        try:
+            run_multi_turn_mode(ai, config.project_path, preprompts_holder, prompt)
+        finally:
+            # Ensure session cleanup happens even in multi-turn mode
+            if observability and observability.is_enabled():
+                try:
+                    observability.flush_data()
+                    
+                    # End session
+                    if session_id:
+                        observability.end_session()
+
+                    # Cleanup SDK
+                    observability.cleanup()
+                    print("Maxim observability cleanup completed for multi-turn mode")
+
+                except Exception as e:
+                    logging.warning(f"Failed to cleanup observability in multi-turn mode: {e}")
         return
 
     # configure generation function
@@ -580,7 +597,7 @@ def execute_gpt_engineer(config: CliConfig) -> None:
 
             observability.start_trace(
                 trace_id=trace_id,
-                name=operation_name,
+                name=trace_id,
                 tags=trace_tags,
                 metadata=trace_metadata,
                 session_id=session_id,

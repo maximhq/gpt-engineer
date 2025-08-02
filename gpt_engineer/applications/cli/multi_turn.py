@@ -1024,7 +1024,7 @@ Examples:
 
                 self.observability.start_trace(
                     trace_id=trace_id,
-                    name=f"Conversation Turn {turn_number}",
+                    name=trace_id,
                     tags=trace_tags,
                     metadata=trace_metadata,
                     # Use existing session from main.py
@@ -1092,7 +1092,7 @@ Examples:
                 # Ensure files_dict is defined even on error
                 if files_dict is None:
                     files_dict = self.current_files
-            # Set trace output and end trace AFTER confirming user wants to continue
+                        # Set trace output and end trace AFTER confirming user wants to continue
             if self.observability and self.observability.is_enabled() and trace_id:
                 # Calculate comprehensive metrics for trace output
                 total_size = sum(len(content) for content in files_dict.values())
@@ -1143,6 +1143,17 @@ Examples:
 
             next_input = self._get_user_input()
 
+            # Handle quick feedback (0 = negative, 1 = positive)
+            if next_input == '0' or next_input == '1':
+                feedback_score = 1 if next_input == '1' else 0
+                print(f"Thank you for your feedback! ({'Positive' if feedback_score else 'Negative'})")
+                
+                if self.observability and self.observability.is_enabled() and trace_id:
+                    self.observability.add_feedback(feedback_score, trace_id=trace_id)
+                
+                # Get next input for the actual conversation
+                next_input = self._get_user_input()
+
             if next_input is None:
                 print(colored("👋 Ending multi-turn conversation. Goodbye!", "green"))                    # Calculate comprehensive metrics for trace outpu
                 print("\n" + "=" * 50)
@@ -1150,10 +1161,18 @@ Examples:
                 print("=" * 50)
                 print("Please provide feedback about your multi-turn session experience:")
                 
-                review = human_review_input(multi_turn=False)  # Enable feedback collection for exit
+                review = human_review_input(multi_turn=False, force_collection=True)  # Enable feedback collection for exit
                 if review:
+                    print(f"📝 Feedback collected: {review.raw}")
                     if self.observability and self.observability.is_enabled():
-                        self.observability.add_session_feedback(review)
+                        if self.observability.safe_add_session_feedback(review):
+                            print("✅ Session feedback added to Maxim")
+                        else:
+                            print("⚠️ Failed to add session feedback to Maxim")
+                    else:
+                        print("⚠️ Observability not available for session feedback")
+                else:
+                    print("ℹ️ No feedback collected")
                 
                 break
             # Create new prompt for next turn

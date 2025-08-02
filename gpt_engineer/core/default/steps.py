@@ -463,7 +463,7 @@ def execute_entrypoint(
             new_trace_id = str(uuid4())
             observability.start_trace(
                 trace_id=new_trace_id,
-                name="Command Execution",
+                name=new_trace_id,
                 tags={
                     "operation": "command_execution",
                     "phase": "execution",

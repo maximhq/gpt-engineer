@@ -213,7 +213,7 @@ def main(
 
                 observability.start_trace(
                     trace_id=trace_id,
-                    name=f"Benchmark: {benchmark_name}",
+                    name=trace_id,
                     tags=trace_tags,
                     metadata=trace_metadata,
                     session_id=session_id,
