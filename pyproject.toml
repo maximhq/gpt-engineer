@@ -40,6 +40,8 @@ black = "23.3.0"
 langchain-community = "^0.2.0"
 maxim-py = "3.9.4"
 pre-commit = "^4.2.0"
+flask = "^3.0.0"
+flask-cors = "^4.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.3.1"
@@ -68,6 +70,7 @@ sphinx_copybutton = ">=0.5.2"
 gpt-engineer = 'gpt_engineer.applications.cli.main:app'
 ge = 'gpt_engineer.applications.cli.main:app'
 gpte = 'gpt_engineer.applications.cli.main:app'
+gpte-web = 'gpt_engineer.applications.web.__main__:main'
 bench = 'gpt_engineer.benchmark.__main__:app'
 gpte_test_application = 'tests.caching_main:app'
 

@@ -28,10 +28,8 @@ from typing import Dict, Tuple
 
 from regex import regex
 
-from gpt_engineer.core.ai import OBSERVABILITY_AVAILABLE
 from gpt_engineer.core.diff import ADD, REMOVE, RETAIN, Diff, Hunk
 from gpt_engineer.core.files_dict import FilesDict, file_to_lines_dict
-from gpt_engineer.core.maxim_observability import get_observability
 
 # Initialize a logger for this module
 logger = logging.getLogger(__name__)

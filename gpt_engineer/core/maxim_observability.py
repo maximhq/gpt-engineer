@@ -269,26 +269,24 @@ class MaximObservability:
                 try:
                     score = int(review)
                 except ValueError:
-                    logger.warning(f"[MaximObservability] add_feedback: cannot convert string '{review}' to int")
+                    logger.warning(
+                        f"[MaximObservability] add_feedback: cannot convert string '{review}' to int"
+                    )
                     return
             else:
-                logger.warning(f"[MaximObservability] add_feedback: unsupported review type {type(review)}")
+                logger.warning(
+                    f"[MaximObservability] add_feedback: unsupported review type {type(review)}"
+                )
                 return
 
             if trace_id:
-                self.logger.trace_add_feedback(trace_id, FeedbackDict(
-                    score=score
-                ))
+                self.logger.trace_add_feedback(trace_id, FeedbackDict(score=score))
                 logger.debug(
                     f"[MaximObservability] Added Feedback to Maxim trace: {trace_id}"
                 )
-                
+
             elif self.current_trace:
-                self.current_trace.feedback(
-                    feedback=FeedbackDict(
-                        score=score
-                    )
-                )
+                self.current_trace.feedback(feedback=FeedbackDict(score=score))
                 logger.debug(
                     f"[MaximObservability] Added Feedback to Maxim trace: {self.current_session_id or 'current'}"
                 )
@@ -299,7 +297,9 @@ class MaximObservability:
     def add_session_feedback(self, review) -> None:
         logger.debug("[MaximObservability] add_session_feedback called")
         if not self.is_enabled():
-            logger.debug("[MaximObservability] add_session_feedback: Observability not enabled")
+            logger.debug(
+                "[MaximObservability] add_session_feedback: Observability not enabled"
+            )
             return
 
         try:
@@ -310,28 +310,34 @@ class MaximObservability:
                 score = 0.5
             elif hasattr(review, "ran") and review.ran:
                 score = 0.25
-            
+
             logger.debug(f"[MaximObservability] Calculated score: {score}")
-            logger.debug(f"[MaximObservability] Current session ID: {self.current_session_id}")
-            
+            logger.debug(
+                f"[MaximObservability] Current session ID: {self.current_session_id}"
+            )
+
             if self.current_session_id:
                 self.logger.session_add_feedback(
                     session_id=self.current_session_id,
                     feedback=FeedbackDict(
                         score=score,
                         comment=review.comments if review.comments else review.raw,
-                    )
+                    ),
                 )
                 logger.debug(
                     f"[MaximObservability] Added Feedback to Maxim session: {self.current_session_id}"
                 )
-                
+
                 # Flush data immediately after adding feedback to ensure it's persisted
                 self.flush_data()
-                logger.debug("[MaximObservability] Data flushed after adding session feedback")
+                logger.debug(
+                    "[MaximObservability] Data flushed after adding session feedback"
+                )
             else:
-                logger.warning("[MaximObservability] No current session ID available for feedback")
-                
+                logger.warning(
+                    "[MaximObservability] No current session ID available for feedback"
+                )
+
         except Exception as e:
             self._log_exception("add_session_feedback", e)
             # Try to flush data even if feedback addition failed
@@ -339,42 +345,52 @@ class MaximObservability:
                 self.flush_data()
                 logger.debug("[MaximObservability] Data flushed after feedback error")
             except Exception as flush_error:
-                logger.error(f"[MaximObservability] Failed to flush data after feedback error: {flush_error}")
+                logger.error(
+                    f"[MaximObservability] Failed to flush data after feedback error: {flush_error}"
+                )
             return None
 
     def safe_add_session_feedback(self, review) -> bool:
         """
         Safely add session feedback with proper error handling and session validation.
-        
+
         Args:
             review: The review object containing feedback data
-            
+
         Returns:
             bool: True if feedback was successfully added, False otherwise
         """
         logger.debug("[MaximObservability] safe_add_session_feedback called")
-        
+
         if not self.is_enabled():
-            logger.debug("[MaximObservability] safe_add_session_feedback: Observability not enabled")
+            logger.debug(
+                "[MaximObservability] safe_add_session_feedback: Observability not enabled"
+            )
             return False
-            
+
         # Validate session state before proceeding
         if not self.validate_session_state():
-            logger.warning("[MaximObservability] safe_add_session_feedback: Session state validation failed")
+            logger.warning(
+                "[MaximObservability] safe_add_session_feedback: Session state validation failed"
+            )
             return False
-            
+
         try:
             # Add the feedback
             self.add_session_feedback(review)
-            
+
             # Verify the feedback was added by checking if we can still access the session
             if self.validate_session_state():
-                logger.debug("[MaximObservability] safe_add_session_feedback: Feedback added successfully")
+                logger.debug(
+                    "[MaximObservability] safe_add_session_feedback: Feedback added successfully"
+                )
                 return True
             else:
-                logger.warning("[MaximObservability] safe_add_session_feedback: Session became invalid after feedback")
+                logger.warning(
+                    "[MaximObservability] safe_add_session_feedback: Session became invalid after feedback"
+                )
                 return False
-                
+
         except Exception as e:
             logger.error(f"[MaximObservability] safe_add_session_feedback failed: {e}")
             return False
@@ -1490,9 +1506,7 @@ class MaximObservability:
             logger.debug("[MaximObservability] Data flush completed")
 
         except Exception as e:
-            logger.error(
-                f"[MaximObservability] Failed to flush data: {e}"
-            )
+            logger.error(f"[MaximObservability] Failed to flush data: {e}")
 
     def cleanup(self) -> None:
         """
@@ -1519,7 +1533,6 @@ class MaximObservability:
             # End current session
             if self.current_session:
                 self.end_session()
-
 
             if self.maxim:
                 self.maxim.cleanup()
@@ -1612,39 +1625,51 @@ class MaximObservability:
     def validate_session_state(self) -> bool:
         """
         Validate that the current session state is consistent and ready for operations.
-        
+
         Returns:
             bool: True if session state is valid, False otherwise
         """
         logger.debug("[MaximObservability] validate_session_state called")
-        
+
         if not self.is_enabled():
-            logger.debug("[MaximObservability] validate_session_state: Observability not enabled")
+            logger.debug(
+                "[MaximObservability] validate_session_state: Observability not enabled"
+            )
             return False
-            
+
         # Check if we have both session ID and session object
         if not self.current_session_id:
-            logger.warning("[MaximObservability] validate_session_state: No current session ID")
+            logger.warning(
+                "[MaximObservability] validate_session_state: No current session ID"
+            )
             return False
-            
+
         if not self.current_session:
-            logger.warning("[MaximObservability] validate_session_state: No current session object")
+            logger.warning(
+                "[MaximObservability] validate_session_state: No current session object"
+            )
             return False
-            
+
         # Try to access session properties to verify it's still valid
         try:
             # This is a basic check - in a real implementation you might want to check
             # if the session object is still responsive
-            session_id = getattr(self.current_session, 'id', None)
+            session_id = getattr(self.current_session, "id", None)
             if session_id != self.current_session_id:
-                logger.warning(f"[MaximObservability] validate_session_state: Session ID mismatch - expected {self.current_session_id}, got {session_id}")
+                logger.warning(
+                    f"[MaximObservability] validate_session_state: Session ID mismatch - expected {self.current_session_id}, got {session_id}"
+                )
                 return False
-                
-            logger.debug("[MaximObservability] validate_session_state: Session state is valid")
+
+            logger.debug(
+                "[MaximObservability] validate_session_state: Session state is valid"
+            )
             return True
-            
+
         except Exception as e:
-            logger.warning(f"[MaximObservability] validate_session_state: Session validation failed: {e}")
+            logger.warning(
+                f"[MaximObservability] validate_session_state: Session validation failed: {e}"
+            )
             return False
 
 

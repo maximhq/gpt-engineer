@@ -517,7 +517,7 @@ def execute_gpt_engineer(config: CliConfig) -> None:
             if observability and observability.is_enabled():
                 try:
                     observability.flush_data()
-                    
+
                     # End session
                     if session_id:
                         observability.end_session()
@@ -527,7 +527,9 @@ def execute_gpt_engineer(config: CliConfig) -> None:
                     print("Maxim observability cleanup completed for multi-turn mode")
 
                 except Exception as e:
-                    logging.warning(f"Failed to cleanup observability in multi-turn mode: {e}")
+                    logging.warning(
+                        f"Failed to cleanup observability in multi-turn mode: {e}"
+                    )
         return
 
     # configure generation function
@@ -1300,7 +1302,7 @@ def execute_gpt_engineer(config: CliConfig) -> None:
                     observability.end_trace(trace_id)
 
                 observability.flush_data()
-                
+
                 # End session
                 if session_id:
                     observability.end_session()

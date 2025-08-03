@@ -46,7 +46,6 @@ from typing import Optional
 from termcolor import colored
 
 from gpt_engineer.applications.cli.cli_agent import CliAgent
-from gpt_engineer.applications.cli.collect import collect_learnings
 from gpt_engineer.applications.cli.file_selector import FileSelector
 from gpt_engineer.applications.cli.learning import human_review_input
 from gpt_engineer.core.ai import AI
@@ -64,7 +63,7 @@ from gpt_engineer.core.files_dict import FilesDict
 from gpt_engineer.core.git import stage_uncommitted_to_git
 from gpt_engineer.core.preprompts_holder import PrepromptsHolder
 from gpt_engineer.core.prompt import Prompt
-from gpt_engineer.tools.custom_steps import clarified_gen, self_heal
+from gpt_engineer.tools.custom_steps import self_heal
 
 # Import observability
 try:
@@ -398,52 +397,49 @@ Examples:
             )
 
             if OBSERVABILITY_AVAILABLE and files_dict:
-                        try:
-                            observability = get_observability()
-                            if observability and observability.is_enabled():
-                                # Attach each generated file to the current trace
-                                for filename, content in files_dict.items():
-                                    try:
-                                        # Determine MIME type based on file extension
-                                        mime_type = None
-                                        if filename.endswith(".py"):
-                                            mime_type = "text/x-python"
-                                        elif filename.endswith(".js"):
-                                            mime_type = "text/javascript"
-                                        elif filename.endswith(".html"):
-                                            mime_type = "text/html"
-                                        elif filename.endswith(".css"):
-                                            mime_type = "text/css"
-                                        elif filename.endswith(".json"):
-                                            mime_type = "application/json"
-                                        elif filename.endswith(".md"):
-                                            mime_type = "text/markdown"
-                                        elif filename.endswith(".txt"):
-                                            mime_type = "text/plain"
-                                        elif filename.endswith(".toml"):
-                                            mime_type = "text/x-toml"
-                                        elif filename.endswith(".yml") or filename.endswith(
-                                            ".yaml"
-                                        ):
-                                            mime_type = "text/x-yaml"
-                                        else:
-                                            mime_type = "text/plain"
+                try:
+                    observability = get_observability()
+                    if observability and observability.is_enabled():
+                        # Attach each generated file to the current trace
+                        for filename, content in files_dict.items():
+                            try:
+                                # Determine MIME type based on file extension
+                                mime_type = None
+                                if filename.endswith(".py"):
+                                    mime_type = "text/x-python"
+                                elif filename.endswith(".js"):
+                                    mime_type = "text/javascript"
+                                elif filename.endswith(".html"):
+                                    mime_type = "text/html"
+                                elif filename.endswith(".css"):
+                                    mime_type = "text/css"
+                                elif filename.endswith(".json"):
+                                    mime_type = "application/json"
+                                elif filename.endswith(".md"):
+                                    mime_type = "text/markdown"
+                                elif filename.endswith(".txt"):
+                                    mime_type = "text/plain"
+                                elif filename.endswith(".toml"):
+                                    mime_type = "text/x-toml"
+                                elif filename.endswith(".yml") or filename.endswith(
+                                    ".yaml"
+                                ):
+                                    mime_type = "text/x-yaml"
+                                else:
+                                    mime_type = "text/plain"
 
-                                        # Add file attachment to the current trace
-                                        observability.add_file_attachment(
-                                            filename=filename,
-                                            content=content,
-                                            mime_type=mime_type,
-                                            target="trace"
-                                        )
-                                        print(f"📎 Attached {filename} to trace")
-                                    except Exception as e:
-                                        print(
-                                            f"⚠️  Failed to attach {filename} to trace: {e}"
-                                        )
-                        except Exception as e:
-                            print(f"⚠️  Failed to attach files to trace: {e}")
-
+                                # Add file attachment to the current trace
+                                observability.add_file_attachment(
+                                    filename=filename,
+                                    content=content,
+                                    mime_type=mime_type,
+                                    target="trace",
+                                )
+                                print(f"📎 Attached {filename} to trace")
+                            except Exception as e:
+                                print(f"⚠️  Failed to attach {filename} to trace: {e}")
+                except Exception as e:
+                    print(f"⚠️  Failed to attach files to trace: {e}")
 
             # Apply the files
             self.files.push(files_dict)
@@ -540,13 +536,11 @@ Examples:
                                     filename=filename,
                                     content=content,
                                     mime_type=mime_type,
-                                    target="trace"
+                                    target="trace",
                                 )
                                 print(f"📎 Attached {filename} to trace")
                             except Exception as e:
-                                print(
-                                    f"⚠️  Failed to attach {filename} to trace: {e}"
-                                )
+                                print(f"⚠️  Failed to attach {filename} to trace: {e}")
                 except Exception as e:
                     print(f"⚠️  Failed to attach files to trace: {e}")
 
@@ -791,7 +785,7 @@ Examples:
                                         filename=filename,
                                         content=content,
                                         mime_type=mime_type,
-                                        target="trace"
+                                        target="trace",
                                     )
                                     print(f"📎 Attached {filename} to trace")
                                 except Exception as e:
@@ -800,7 +794,6 @@ Examples:
                                     )
                     except Exception as e:
                         print(f"⚠️  Failed to attach files to trace: {e}")
-
 
                 # Execute the entrypoint (code processing)
                 merged_files = execute_entrypoint(
@@ -1092,7 +1085,7 @@ Examples:
                 # Ensure files_dict is defined even on error
                 if files_dict is None:
                     files_dict = self.current_files
-                        # Set trace output and end trace AFTER confirming user wants to continue
+                    # Set trace output and end trace AFTER confirming user wants to continue
             if self.observability and self.observability.is_enabled() and trace_id:
                 # Calculate comprehensive metrics for trace output
                 total_size = sum(len(content) for content in files_dict.values())
@@ -1144,24 +1137,32 @@ Examples:
             next_input = self._get_user_input()
 
             # Handle quick feedback (0 = negative, 1 = positive)
-            if next_input == '0' or next_input == '1':
-                feedback_score = 1 if next_input == '1' else 0
-                print(f"Thank you for your feedback! ({'Positive' if feedback_score else 'Negative'})")
-                
+            if next_input == "0" or next_input == "1":
+                feedback_score = 1 if next_input == "1" else 0
+                print(
+                    f"Thank you for your feedback! ({'Positive' if feedback_score else 'Negative'})"
+                )
+
                 if self.observability and self.observability.is_enabled() and trace_id:
                     self.observability.add_feedback(feedback_score, trace_id=trace_id)
-                
+
                 # Get next input for the actual conversation
                 next_input = self._get_user_input()
 
             if next_input is None:
-                print(colored("👋 Ending multi-turn conversation. Goodbye!", "green"))                    # Calculate comprehensive metrics for trace outpu
+                print(
+                    colored("👋 Ending multi-turn conversation. Goodbye!", "green")
+                )  # Calculate comprehensive metrics for trace outpu
                 print("\n" + "=" * 50)
                 print(colored("📝 Session Feedback", "cyan"))
                 print("=" * 50)
-                print("Please provide feedback about your multi-turn session experience:")
-                
-                review = human_review_input(multi_turn=False, force_collection=True)  # Enable feedback collection for exit
+                print(
+                    "Please provide feedback about your multi-turn session experience:"
+                )
+
+                review = human_review_input(
+                    multi_turn=False, force_collection=True
+                )  # Enable feedback collection for exit
                 if review:
                     print(f"📝 Feedback collected: {review.raw}")
                     if self.observability and self.observability.is_enabled():
@@ -1173,7 +1174,7 @@ Examples:
                         print("⚠️ Observability not available for session feedback")
                 else:
                     print("ℹ️ No feedback collected")
-                
+
                 break
             # Create new prompt for next turn
             current_prompt = Prompt(next_input)

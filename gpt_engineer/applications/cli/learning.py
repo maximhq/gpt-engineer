@@ -127,7 +127,9 @@ TERM_CHOICES = (
 )
 
 
-def human_review_input(multi_turn: bool = False, force_collection: bool = False) -> Optional[Review]:
+def human_review_input(
+    multi_turn: bool = False, force_collection: bool = False
+) -> Optional[Review]:
     """
     Interactively prompts the user to review the generated code and returns their feedback encapsulated in a Review object.
 
@@ -223,7 +225,7 @@ def check_collection_consent(multi_turn: bool = False) -> bool:
         return True
     else:
         return True
-   
+
 
 def ask_collection_consent() -> bool:
     """

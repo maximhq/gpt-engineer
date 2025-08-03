@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPT Engineer Web UI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Left Panel - Chat Area */
+        .chat-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #30363d;
+            background-color: #161b22;
+        }
+
+        .chat-header {
+            padding: 20px;
+            border-bottom: 1px solid #30363d;
+            background-color: #21262d;
+        }
+
+        .chat-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #f0f6fc;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #21262d;
+            border: 1px solid #30363d;
+        }
+
+        .message.user {
+            background-color: #1f6feb;
+            border-color: #1f6feb;
+            color: white;
+        }
+
+        .message.agent {
+            background-color: #21262d;
+            border-color: #30363d;
+        }
+
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 12px;
+            opacity: 0.7;
+        }
+
+        .message-content {
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        .message.clickable {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .message.clickable:hover {
+            background-color: #1c2128;
+        }
+
+        .message-files-indicator {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #1f6feb;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .message-files-indicator::before {
+            content: "📁";
+            font-size: 14px;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 15px;
+            color: #8b949e;
+        }
+
+        .loading-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .loading-dots span {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background-color: #8b949e;
+            animation: loading 1.4s infinite ease-in-out;
+        }
+
+        .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes loading {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+
+        .input-area {
+            padding: 20px;
+            border-top: 1px solid #30363d;
+            background-color: #21262d;
+        }
+
+        .input-container {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .input-field {
+            flex: 1;
+            min-height: 60px;
+            max-height: 120px;
+            padding: 15px;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: inherit;
+            font-size: 14px;
+            resize: vertical;
+            outline: none;
+        }
+
+        .input-field:focus {
+            border-color: #1f6feb;
+            box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.2);
+        }
+
+        .send-button {
+            width: 50px;
+            height: 50px;
+            border: none;
+            border-radius: 50%;
+            background-color: #1f6feb;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s;
+        }
+
+        .send-button:hover {
+            background-color: #1a5fcc;
+        }
+
+        .send-button:disabled {
+            background-color: #30363d;
+            cursor: not-allowed;
+        }
+
+        .input-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .action-button {
+            width: 32px;
+            height: 32px;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            background-color: transparent;
+            color: #8b949e;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .action-button:hover {
+            background-color: #30363d;
+            color: #c9d1d9;
+        }
+
+        /* Right Panel - Preview Area */
+        .preview-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: #0d1117;
+        }
+
+        .preview-header {
+            padding: 20px;
+            border-bottom: 1px solid #30363d;
+            background-color: #21262d;
+        }
+
+        .preview-tabs {
+            display: flex;
+            gap: 0;
+            border-radius: 6px;
+            background-color: #0d1117;
+            padding: 4px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 8px 16px;
+            border: none;
+            background-color: transparent;
+            color: #8b949e;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .tab.active {
+            background-color: #1f6feb;
+            color: white;
+        }
+
+        .tab:hover:not(.active) {
+            background-color: #30363d;
+            color: #c9d1d9;
+        }
+
+        .preview-content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .preview-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            color: #8b949e;
+            text-align: center;
+            min-height: 0;
+        }
+
+        .preview-logo {
+            font-size: 72px;
+            font-weight: 300;
+            color: #30363d;
+            margin-bottom: 20px;
+        }
+
+        .file-tree {
+            background-color: #21262d;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-bottom: 1px solid #30363d;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .file-item:hover {
+            background-color: #21262d;
+        }
+
+        .file-item.active {
+            background-color: #1f6feb;
+            color: white;
+        }
+
+        .file-item.active .file-icon {
+            color: white;
+        }
+
+        .file-item .file-name {
+            flex: 1;
+            font-size: 14px;
+            color: #c9d1d9;
+        }
+
+        .file-item:hover .file-name {
+            color: #f0f6fc;
+        }
+
+        .file-item.active .file-name {
+            color: white;
+        }
+
+        .file-item:last-child {
+            border-bottom: none;
+        }
+
+        .file-icon {
+            width: 16px;
+            height: 16px;
+            color: #8b949e;
+        }
+
+        .file-name {
+            flex: 1;
+            font-size: 14px;
+            color: #c9d1d9;
+        }
+
+        .file-content {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            overflow-x: auto;
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .file-content pre {
+            flex: 1;
+            overflow-y: auto;
+            margin: 0;
+            padding: 0;
+        }
+
+        .file-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #30363d;
+            color: #f0f6fc;
+        }
+
+        .file-header .file-icon {
+            width: 16px;
+            height: 16px;
+            color: #8b949e;
+        }
+
+        .file-header strong {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .mode-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .mode-badge.debug { background-color: #f85149; color: white; }
+        .mode-badge.improve { background-color: #238636; color: white; }
+        .mode-badge.generate { background-color: #1f6feb; color: white; }
+        .mode-badge.misc { background-color: #9e6a03; color: white; }
+
+        /* Feedback Buttons */
+        .feedback-buttons {
+            display: flex;
+            gap: 8px;
+            margin-left: auto;
+        }
+
+        .feedback-btn {
+            background: none;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            padding: 4px 6px;
+            cursor: pointer;
+            color: #8b949e;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .feedback-btn:hover {
+            background-color: #21262d;
+            color: #c9d1d9;
+            border-color: #484f58;
+        }
+
+        .feedback-btn.thumbs-up:hover {
+            color: #238636;
+            border-color: #238636;
+        }
+
+        .feedback-btn.thumbs-down:hover {
+            color: #f85149;
+            border-color: #f85149;
+        }
+
+        .feedback-btn:active {
+            transform: scale(0.95);
+        }
+
+        .feedback-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .feedback-btn.feedback-submitted {
+            background-color: #21262d;
+            border-color: #484f58;
+            color: #8b949e;
+        }
+
+        .feedback-btn.feedback-success {
+            background-color: #238636;
+            border-color: #238636;
+            color: white;
+        }
+
+        .feedback-btn.feedback-success.thumbs-down {
+            background-color: #f85149;
+            border-color: #f85149;
+        }
+
+        /* Feedback Notification */
+        .feedback-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px 16px;
+            color: #c9d1d9;
+            font-size: 14px;
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Stream Output Styles */
+        .stream-output {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            height: calc(100vh - 200px);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stream-output h3 {
+            margin: 0 0 15px 0;
+            color: #f0f6fc;
+            font-size: 16px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .stream-content {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            flex: 1;
+            overflow-y: auto;
+            color: #c9d1d9;
+            min-height: 0;
+        }
+
+        .stream-line {
+            margin-bottom: 4px;
+            word-wrap: break-word;
+        }
+
+        .stream-line:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Auto-scroll animation */
+        .stream-content {
+            scroll-behavior: smooth;
+        }
+
+
+
+        /* Footer */
+        .preview-footer {
+            padding: 15px 20px;
+            border-top: 1px solid #30363d;
+            background-color: #21262d;
+            display: flex;
+            justify-content: flex-end;
+            gap: 15px;
+        }
+
+        .footer-link {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #8b949e;
+            text-decoration: none;
+            font-size: 12px;
+            transition: color 0.2s;
+        }
+
+        .footer-link:hover {
+            color: #c9d1d9;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .chat-panel, .preview-panel {
+                flex: none;
+                height: 50vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Left Panel - Chat Area -->
+        <div class="chat-panel">
+            <div class="chat-header">
+                <div class="chat-title">GPT Engineer Chat</div>
+            </div>
+
+            <div class="chat-messages" id="chatMessages">
+                <!-- Messages will be added here dynamically -->
+            </div>
+
+            <div class="input-area">
+                <div class="input-container">
+                    <textarea
+                        class="input-field"
+                        id="promptInput"
+                        placeholder="How can GPT Engineer help you today? (or /command)"
+                        rows="3"
+                    ></textarea>
+                    <button class="send-button" id="sendButton">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="input-actions">
+                    <button class="action-button" title="Attach file">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                        </svg>
+                    </button>
+                    <button class="action-button" title="Link">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                        </svg>
+                    </button>
+                    <button class="action-button" title="Image">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                            <circle cx="8.5" cy="8.5" r="1.5"/>
+                            <path d="M21 15l-5-5L5 21"/>
+                        </svg>
+                    </button>
+                    <button class="action-button" title="New file">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14,2 14,8 20,8"/>
+                            <line x1="12" y1="18" x2="12" y2="12"/>
+                            <line x1="9" y1="15" x2="15" y2="15"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel - Preview Area -->
+        <div class="preview-panel">
+            <div class="preview-header">
+                <div class="preview-tabs">
+                    <button class="tab" id="codeTab">Code</button>
+                    <button class="tab active" id="previewTab">Preview</button>
+                </div>
+            </div>
+
+            <div class="preview-content" id="previewContent">
+                <div class="preview-placeholder">
+                    <div class="preview-logo">b</div>
+                    <div>Your preview will appear here</div>
+                </div>
+            </div>
+
+            <div class="preview-footer">
+                <a href="#" class="footer-link">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    Help Center
+                </a>
+                <a href="#" class="footer-link">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    Join our Community
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class GPTEngineerWebUI {
+            constructor() {
+                this.sessionId = localStorage.getItem('sessionId');
+                this.isLoading = false;
+                this.lastResult = null;
+                this.streamHistory = [];
+                this.eventSource = null;
+                this.currentFiles = {};
+                this.fileContents = {};
+                this.feedbackStates = new Map(); // Store feedback state per trace
+                this.promptFiles = new Map(); // Store files per prompt
+                this.sessionTraces = new Map(); // Store trace data per session
+                this.initializeElements();
+                this.bindEvents();
+                this.resetState();
+                this.handlePageRefresh().catch(error => {
+                    console.log('Page refresh handler error:', error);
+                });
+            }
+
+            initializeElements() {
+                this.chatMessages = document.getElementById('chatMessages');
+                this.promptInput = document.getElementById('promptInput');
+                this.sendButton = document.getElementById('sendButton');
+                this.previewContent = document.getElementById('previewContent');
+                this.codeTab = document.getElementById('codeTab');
+                this.previewTab = document.getElementById('previewTab');
+            }
+
+            bindEvents() {
+                this.sendButton.addEventListener('click', () => this.sendMessage());
+                this.promptInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+
+                this.codeTab.addEventListener('click', () => this.switchTab('code'));
+                this.previewTab.addEventListener('click', () => this.switchTab('preview'));
+
+                // Handle page refresh/visibility change
+                window.addEventListener('beforeunload', () => this.cleanupOnExit());
+                // Don't cleanup on visibility change - only on actual page unload
+                // document.addEventListener('visibilitychange', () => {
+                //     if (document.visibilityState === 'hidden') {
+                //         this.cleanupOnExit();
+                //     }
+                // });
+            }
+
+            async sendMessage() {
+                const prompt = this.promptInput.value.trim();
+                if (!prompt || this.isLoading) return;
+
+                this.isLoading = true;
+                this.sendButton.disabled = true;
+                this.promptInput.disabled = true;
+
+                // Add user message
+                this.addMessage(prompt, 'user');
+
+                // Add loading indicator
+                const loadingId = this.addLoadingMessage();
+
+                try {
+                    const response = await fetch('/api/chat', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            prompt: prompt,
+                            session_id: this.sessionId
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    // Remove loading indicator
+                    this.removeLoadingMessage(loadingId);
+
+                    if (result.success) {
+                        this.sessionId = result.session_id;
+                        localStorage.setItem('sessionId', result.session_id);
+                        this.lastResult = result;
+
+                        // Store trace data
+                        if (result.trace_id) {
+                            const traceData = {
+                                prompt: prompt,
+                                mode: result.mode,
+                                files: result.files || {},
+                                feedback: null,
+                                timestamp: new Date().toISOString()
+                            };
+                            this.sessionTraces.set(result.trace_id, traceData);
+
+                            // Store files for this trace
+                            if (result.files) {
+                                this.promptFiles.set(result.trace_id, result.files);
+                            }
+                        }
+
+                        this.addMessage(this.formatAgentResponse(result), 'agent', result.trace_id);
+                        this.updateCodePreview(result.files);
+                        this.startStreaming();
+                        this.logSessionStats(); // Log session statistics
+                    } else {
+                        this.addMessage(`Error: ${result.error}`, 'agent');
+                    }
+                } catch (error) {
+                    this.removeLoadingMessage(loadingId);
+                    this.addMessage(`Error: ${error.message}`, 'agent');
+                } finally {
+                    this.isLoading = false;
+                    this.sendButton.disabled = false;
+                    this.promptInput.disabled = false;
+                    this.promptInput.value = '';
+                    this.promptInput.focus();
+                }
+            }
+
+            addMessage(content, type, traceId = null) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${type}`;
+
+                // Make agent messages clickable if they have files
+                if (type === 'agent' && traceId && this.promptFiles.has(traceId)) {
+                    messageDiv.classList.add('clickable');
+                    messageDiv.setAttribute('data-trace-id', traceId);
+
+                    // Add click handler to show files
+                    messageDiv.addEventListener('click', (e) => {
+                        // Don't trigger if clicking feedback buttons
+                        if (!e.target.closest('.feedback-buttons')) {
+                            const files = this.promptFiles.get(traceId);
+                            if (files) {
+                                this.switchTab('code');
+                                this.updateCodePreview(files);
+                            }
+                        }
+                    });
+                }
+
+                const timestamp = new Date().toLocaleTimeString();
+
+                // Add feedback buttons for agent messages
+                let feedbackButtons = '';
+                if (type === 'agent' && traceId) {
+                    const currentFeedback = this.feedbackStates.get(traceId);
+                    feedbackButtons = `
+                        <div class="feedback-buttons">
+                            <button class="feedback-btn thumbs-up${currentFeedback === 1 ? ' feedback-success' : ''}"
+                                data-trace-id="${traceId}"
+                                data-feedback="1"
+                                title="${currentFeedback === 1 ? 'Change feedback' : 'Good response'}">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 9V5a3 3 0 0 0-6 0v4H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-2z"/>
+                                </svg>
+                            </button>
+                            <button class="feedback-btn thumbs-down${currentFeedback === 0 ? ' feedback-success' : ''}"
+                                data-trace-id="${traceId}"
+                                data-feedback="0"
+                                title="${currentFeedback === 0 ? 'Change feedback' : 'Poor response'}">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M10 15v4a3 3 0 0 0 6 0v-4h2a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-2z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    `;
+                }
+
+                messageDiv.innerHTML = `
+                    <div class="message-header">
+                        <span>${type === 'user' ? 'You' : 'GPT Engineer'}</span>
+                        <span>${timestamp}</span>
+                        ${feedbackButtons}
+                    </div>
+                    <div class="message-content">${content}</div>
+                    ${type === 'agent' && traceId && this.promptFiles.has(traceId) ? '<div class="message-files-indicator">Click to view files</div>' : ''}
+                `;
+
+                this.chatMessages.appendChild(messageDiv);
+                this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+
+                // Add event listeners to feedback buttons
+                if (type === 'agent' && traceId) {
+                    const feedbackButtons = messageDiv.querySelectorAll('.feedback-btn');
+                    feedbackButtons.forEach(button => {
+                        button.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            const traceId = button.getAttribute('data-trace-id');
+                            const feedbackScore = parseInt(button.getAttribute('data-feedback'));
+                            this.submitFeedback(traceId, feedbackScore, button);
+                        });
+                    });
+                }
+            }
+
+            addLoadingMessage() {
+                const loadingDiv = document.createElement('div');
+                loadingDiv.className = 'loading';
+                loadingDiv.id = 'loading-' + Date.now();
+
+                loadingDiv.innerHTML = `
+                    <div>GPT Engineer is thinking</div>
+                    <div class="loading-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                `;
+
+                this.chatMessages.appendChild(loadingDiv);
+                this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+                return loadingDiv.id;
+            }
+
+            removeLoadingMessage(loadingId) {
+                const loadingElement = document.getElementById(loadingId);
+                if (loadingElement) {
+                    loadingElement.remove();
+                }
+            }
+
+            formatAgentResponse(result) {
+                let response = `Mode: ${result.mode}\n`;
+                response += `Files generated: ${result.files_count}\n\n`;
+
+                if (result.files && Object.keys(result.files).length > 0) {
+                    response += 'Generated files:\n';
+                    for (const [filename, content] of Object.entries(result.files)) {
+                        response += `• ${filename}\n`;
+                    }
+                }
+
+                return response;
+            }
+
+            async submitFeedback(traceId, feedbackScore, button = null) {
+                console.log(`🚀 Submitting feedback - Trace ID: ${traceId}, Score: ${feedbackScore}, Session ID: ${this.sessionId}`);
+
+                try {
+                    // Check if this is a feedback change
+                    const currentFeedback = this.feedbackStates.get(traceId);
+                    const isChangingFeedback = currentFeedback !== undefined;
+
+                    // If changing feedback, update all buttons in the feedback group
+                    const feedbackGroup = button?.closest('.feedback-buttons');
+                    const allButtons = feedbackGroup?.querySelectorAll('.feedback-btn') || [];
+
+                    // Disable all buttons in the group
+                    allButtons.forEach(btn => {
+                        btn.disabled = true;
+                        btn.classList.add('feedback-submitted');
+                    });
+
+                    const requestBody = {
+                        session_id: this.sessionId,
+                        trace_id: traceId,
+                        feedback_score: feedbackScore,
+                        is_update: isChangingFeedback
+                    };
+
+                    console.log('📤 Sending feedback request:', requestBody);
+
+                    const response = await fetch('/api/feedback', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    console.log('📥 Received response status:', response.status);
+
+                    const result = await response.json();
+                    console.log('📋 Response data:', result);
+
+                    if (result.success) {
+                        console.log('✅ Feedback submitted successfully');
+
+                        // Update feedback state
+                        this.feedbackStates.set(traceId, feedbackScore);
+
+                        // Show feedback confirmation
+                        const feedbackText = isChangingFeedback
+                            ? (feedbackScore === 1 ? '👍 Feedback updated to positive!' : '👎 Feedback updated to negative!')
+                            : (feedbackScore === 1 ? '👍 Thank you for your positive feedback!' : '👎 Thank you for your feedback!');
+                        this.showFeedbackConfirmation(feedbackText);
+
+                        // Update button appearances
+                        allButtons.forEach(btn => {
+                            btn.classList.remove('feedback-success');
+                            btn.disabled = false;
+                            if (parseInt(btn.getAttribute('data-feedback')) === feedbackScore) {
+                                btn.classList.add('feedback-success');
+                            }
+                        });
+
+                        console.log('🎨 Buttons styled for success');
+                    } else {
+                        console.error('❌ Feedback submission failed:', result.error);
+
+                        // Re-enable buttons if submission failed
+                        allButtons.forEach(btn => {
+                            btn.disabled = false;
+                            btn.classList.remove('feedback-submitted');
+                        });
+                        console.log('🔄 Buttons re-enabled due to failure');
+                    }
+                } catch (error) {
+                    console.error('💥 Error submitting feedback:', error);
+                    console.error('Error details:', {
+                        message: error.message,
+                        stack: error.stack,
+                        traceId: traceId,
+                        feedbackScore: feedbackScore,
+                        sessionId: this.sessionId
+                    });
+
+                    // Re-enable buttons if there was an error
+                    const feedbackGroup = button?.closest('.feedback-buttons');
+                    const allButtons = feedbackGroup?.querySelectorAll('.feedback-btn') || [];
+                    allButtons.forEach(btn => {
+                        btn.disabled = false;
+                        btn.classList.remove('feedback-submitted');
+                    });
+                    console.log('🔄 Buttons re-enabled due to error');
+                }
+            }
+
+            showFeedbackConfirmation(message) {
+                // Create a temporary notification
+                const notification = document.createElement('div');
+                notification.className = 'feedback-notification';
+                notification.textContent = message;
+                document.body.appendChild(notification);
+
+                // Remove after 3 seconds
+                setTimeout(() => {
+                    notification.remove();
+                }, 3000);
+            }
+
+            updateCodePreview(files) {
+                if (files && Object.keys(files).length > 0) {
+                    let previewHTML = '<div class="file-tree">';
+                    previewHTML += '<h3>Generated Files</h3>';
+
+                    // Store file contents and create clickable file list
+                    let isFirst = true;
+                    this.fileContents = {};  // Reset file contents
+
+                    for (const [filename, content] of Object.entries(files)) {
+                        const activeClass = isFirst ? ' active' : '';
+                        const escapedFilename = this.escapeHtml(filename);
+                        // Store the content in our fileContents object
+                        this.fileContents[filename] = content;
+
+                        previewHTML += `
+                            <div class="file-item${activeClass}" data-filename="${escapedFilename}">
+                                <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                    <polyline points="14,2 14,8 20,8"/>
+                                </svg>
+                                <span class="file-name">${filename}</span>
+                            </div>
+                        `;
+                        isFirst = false;
+                    }
+
+                    previewHTML += '</div>';
+
+                    // Show first file content by default
+                    const firstFile = Object.entries(files)[0];
+                    if (firstFile) {
+                        const [filename, content] = firstFile;
+                        previewHTML += `
+                            <div class="file-content" id="fileContent">
+                                <div class="file-header">
+                                    <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                        <polyline points="14,2 14,8 20,8"/>
+                                    </svg>
+                                    <strong>${filename}</strong>
+                                </div>
+                                <pre>${this.escapeHtml(content)}</pre>
+                            </div>
+                        `;
+                    }
+
+                    this.previewContent.innerHTML = previewHTML;
+
+                    // Add click event listeners to file items
+                    const fileItems = this.previewContent.querySelectorAll('.file-item');
+                    fileItems.forEach(item => {
+                        item.addEventListener('click', () => {
+                            const filename = item.getAttribute('data-filename');
+                            const content = this.fileContents[filename];
+                            this.selectFile(filename, content);
+                        });
+                    });
+
+                    // Store files for later access
+                    this.currentFiles = files;
+                } else {
+                    this.previewContent.innerHTML = `
+                        <div class="preview-placeholder">
+                            <div class="preview-logo">📄</div>
+                            <div>No files generated yet</div>
+                        </div>
+                    `;
+                }
+            }
+
+            selectFile(filename, content) {
+                // Update file content display
+                const fileContent = document.getElementById('fileContent');
+                if (fileContent) {
+                    fileContent.innerHTML = `
+                        <div class="file-header">
+                            <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14,2 14,8 20,8"/>
+                            </svg>
+                            <strong>${filename}</strong>
+                        </div>
+                        <pre>${content}</pre>
+                    `;
+                }
+
+                // Update active file item styling
+                const fileItems = document.querySelectorAll('.file-item');
+                fileItems.forEach(item => {
+                    item.classList.remove('active');
+                    const itemFilename = item.getAttribute('data-filename');
+                    if (itemFilename === filename) {
+                        item.classList.add('active');
+                    }
+                });
+            }
+
+            updateStreamPreview() {
+                if (this.streamHistory.length > 0) {
+                    let previewHTML = '<div class="stream-output">';
+                    previewHTML += '<h3>CLI Output</h3>';
+                    previewHTML += '<div class="stream-content">';
+
+                    for (const message of this.streamHistory) {
+                        previewHTML += `<div class="stream-line">${this.escapeHtml(message)}</div>`;
+                    }
+
+                    previewHTML += '</div></div>';
+                    this.previewContent.innerHTML = previewHTML;
+                    this.scrollToBottom();
+                } else {
+                    this.previewContent.innerHTML = `
+                        <div class="preview-placeholder">
+                            <div class="preview-logo">🖥️</div>
+                            <div>CLI output will appear here</div>
+                        </div>
+                    `;
+                }
+            }
+
+            startStreaming() {
+                if (!this.sessionId) return;
+
+                // Close existing connection
+                if (this.eventSource) {
+                    this.eventSource.close();
+                }
+
+                // Start new SSE connection
+                this.eventSource = new EventSource(`/api/stream/${this.sessionId}`);
+
+                this.eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+
+                        if (data.type === 'message') {
+                            this.streamHistory.push(data.message);
+                            this.updateStreamPreview();
+                        } else if (data.type === 'connected') {
+                            console.log('Stream connected');
+                        } else if (data.type === 'ping') {
+                            // Keep connection alive
+                        }
+                    } catch (error) {
+                        console.error('Error parsing stream data:', error);
+                    }
+                };
+
+                this.eventSource.onerror = (error) => {
+                    console.error('Stream error:', error);
+                    // Don't close immediately, let it try to reconnect
+                    setTimeout(() => {
+                        if (this.eventSource && this.eventSource.readyState === EventSource.CLOSED) {
+                            console.log('Attempting to reconnect stream...');
+                            this.startStreaming();
+                        }
+                    }, 1000);
+                };
+
+                this.eventSource.onopen = () => {
+                    console.log('Stream connection opened');
+                };
+            }
+
+            scrollToBottom() {
+                const streamContent = this.previewContent.querySelector('.stream-content');
+                if (streamContent) {
+                    streamContent.scrollTop = streamContent.scrollHeight;
+                }
+            }
+
+            resetState() {
+                // Reset all state variables
+                this.sessionId = null;
+                localStorage.removeItem('sessionId');
+                this.isLoading = false;
+                this.lastResult = null;
+                this.streamHistory = [];
+                this.fileContents = {};
+                this.promptFiles.clear();
+                this.feedbackStates.clear();
+                this.sessionTraces.clear();
+
+                // Close any existing event source
+                if (this.eventSource) {
+                    this.eventSource.close();
+                    this.eventSource = null;
+                }
+
+                // Clear chat messages
+                this.chatMessages.innerHTML = '';
+
+                // Reset preview content
+                this.previewContent.innerHTML = `
+                    <div class="preview-placeholder">
+                        <div class="preview-logo">🖥️</div>
+                        <div>CLI output will appear here</div>
+                    </div>
+                `;
+
+                // Reset tabs to preview
+                this.codeTab.classList.remove('active');
+                this.previewTab.classList.add('active');
+
+                console.log('Agent state reset - ready for new session');
+            }
+
+            async handlePageRefresh() {
+                // Clean up any existing sessions on page load
+                try {
+                    await fetch('/api/reset', {
+                        method: 'POST'
+                    });
+                } catch (error) {
+                    console.log('Reset error (expected on first load):', error);
+                }
+
+                // Load session history if we have a session ID
+                if (this.sessionId) {
+                    await this.loadSessionHistory();
+                } else {
+                    // Add a welcome message when page loads
+                    this.addMessage('Welcome to GPT Engineer! Start by typing a prompt below.', 'agent');
+                }
+            }
+
+            async cleanupOnExit() {
+                // Clean up current session if exists
+                if (this.sessionId) {
+                    try {
+                        await fetch(`/api/session/${this.sessionId}`, {
+                            method: 'DELETE'
+                        });
+                    } catch (error) {
+                        console.log('Cleanup error (expected on page refresh):', error);
+                    }
+                }
+
+                // Close event source
+                if (this.eventSource) {
+                    this.eventSource.close();
+                }
+            }
+
+            async loadSessionHistory() {
+                try {
+                    const response = await fetch(`/api/session/${this.sessionId}/history`);
+                    const result = await response.json();
+
+                    if (result.success && result.session) {
+                        const session = result.session;
+
+                        // Load traces
+                        for (const traceData of session.traces) {
+                            const traceId = traceData.trace_id;
+
+                            // Store trace data
+                            this.sessionTraces.set(traceId, {
+                                prompt: traceData.prompt,
+                                mode: traceData.mode,
+                                files: traceData.files || {},
+                                feedback: traceData.feedback,
+                                timestamp: new Date(traceData.created_at * 1000).toISOString()
+                            });
+
+                            // Store files
+                            if (traceData.files) {
+                                this.promptFiles.set(traceId, traceData.files);
+                            }
+
+                            // Store feedback state
+                            if (traceData.feedback !== null) {
+                                this.feedbackStates.set(traceId, traceData.feedback);
+                            }
+
+                            // Add messages to UI
+                            this.addMessage(traceData.prompt, 'user');
+                            this.addMessage(this.formatAgentResponse({
+                                mode: traceData.mode,
+                                files: traceData.files,
+                                files_count: Object.keys(traceData.files || {}).length
+                            }), 'agent', traceId);
+                        }
+
+                        // Update current files
+                        if (session.current_files) {
+                            this.currentFiles = session.current_files;
+                            this.updateCodePreview(session.current_files);
+                        }
+
+                        console.log(`✅ Loaded session history with ${session.traces.length} traces`);
+                        this.logSessionStats(); // Log session statistics after loading
+                    }
+                } catch (error) {
+                    console.log('Error loading session history:', error);
+                    // Add welcome message if loading fails
+                    this.addMessage('Welcome to GPT Engineer! Start by typing a prompt below.', 'agent');
+                }
+            }
+
+            switchTab(tab) {
+                this.codeTab.classList.toggle('active', tab === 'code');
+                this.previewTab.classList.toggle('active', tab === 'preview');
+
+                if (tab === 'code') {
+                    this.showCodeView();
+                } else {
+                    this.showPreviewView();
+                }
+            }
+
+            showCodeView() {
+                // Show generated files in code view
+                if (this.lastResult && this.lastResult.files) {
+                    this.updateCodePreview(this.lastResult.files);
+                } else {
+                    this.previewContent.innerHTML = `
+                        <div class="preview-placeholder">
+                            <div class="preview-logo">📄</div>
+                            <div>Generated files will appear here</div>
+                        </div>
+                    `;
+                }
+            }
+
+            showPreviewView() {
+                // Show streaming output in preview view
+                this.updateStreamPreview();
+            }
+
+            getLastMode() {
+                // This would track the last mode used
+                return '';
+            }
+
+            getTraceInfo(traceId) {
+                return this.sessionTraces.get(traceId) || null;
+            }
+
+            getAllTraces() {
+                return Array.from(this.sessionTraces.entries()).map(([traceId, data]) => ({
+                    traceId,
+                    ...data
+                }));
+            }
+
+            logSessionStats() {
+                console.log('📊 Session Statistics:');
+                console.log(`- Session ID: ${this.sessionId}`);
+                console.log(`- Total Traces: ${this.sessionTraces.size}`);
+                console.log(`- Total Files: ${this.promptFiles.size}`);
+                console.log(`- Feedback States: ${this.feedbackStates.size}`);
+                console.log(`- Stream History Length: ${this.streamHistory.length}`);
+
+                const traces = this.getAllTraces();
+                traces.forEach((trace, index) => {
+                    console.log(`  Trace ${index + 1}:`, {
+                        traceId: trace.traceId,
+                        mode: trace.mode,
+                        filesCount: Object.keys(trace.files).length,
+                        feedback: trace.feedback,
+                        timestamp: trace.timestamp
+                    });
+                });
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+        }
+
+        // Initialize the web UI when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            window.gptEngineerUI = new GPTEngineerWebUI();
+        });
+    </script>
+</body>
+</html>
