@@ -38,9 +38,9 @@ import sys
 import traceback
 
 from pathlib import Path
+from subprocess import TimeoutExpired
 from typing import List, MutableMapping, Optional, Union
 from uuid import uuid4
-from subprocess import TimeoutExpired
 
 from langchain.schema import HumanMessage, SystemMessage
 from termcolor import colored
@@ -470,7 +470,9 @@ def execute_entrypoint_next(
         print()
 
         try:
-            uploaded_result = execution_env.upload(files_dict, parent_span_id=execution_span_id)
+            uploaded_result = execution_env.upload(
+                files_dict, parent_span_id=execution_span_id
+            )
         except Exception as upload_error:
             if observability and observability.is_enabled():
                 observability.log_event(

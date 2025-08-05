@@ -1,7 +1,8 @@
 import subprocess
+
 from platform import platform
 from sys import version_info
-from typing import List, Union, Optional
+from typing import List, Optional, Union
 
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 

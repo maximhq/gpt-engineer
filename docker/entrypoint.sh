@@ -3,6 +3,9 @@
 
 project_dir="/project"
 
+# Set default environment
+ENVIRONMENT=${ENVIRONMENT:-development}
+
 # Check if we should run in CLI mode
 if [ "$1" = "--cli" ]; then
     shift  # Remove the --cli argument
@@ -14,10 +17,16 @@ if [ "$1" = "--cli" ]; then
 else
     # Run the web UI by default
     echo "🚀 Starting GPT Engineer Web UI..."
-    echo "📱 Web UI will be available at: http://0.0.0.0:5000"
-    echo "   Use --cli flag to run in CLI mode instead"
-    echo ""
+    echo "📱 Web UI will be available at: http://0.0.0.0:5001"
+    echo "   Environment: $ENVIRONMENT"
 
-    # Run the web application
-    python -m gpt_engineer.applications.web --host 0.0.0.0 --port 5000
+    if [ "$ENVIRONMENT" = "production" ]; then
+        echo "   Running in production mode with Gunicorn"
+        # Run with Gunicorn for production
+        gunicorn --config gunicorn.conf.py "gpt_engineer.applications.web.app:app"
+    else
+        echo "   Running in development mode with Flask dev server"
+        # Run the web application in development mode
+        python -m gpt_engineer.applications.web --host 0.0.0.0 --port 5001
+    fi
 fi

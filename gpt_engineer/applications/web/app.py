@@ -14,7 +14,7 @@ import uuid
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from flask import Flask, Response, jsonify, render_template, request
 from flask_cors import CORS
@@ -25,7 +25,7 @@ from gpt_engineer.core.preprompts_holder import PrepromptsHolder
 from gpt_engineer.core.prompt import Prompt
 
 # Import database-backed state management
-from .state_manager import get_state_manager, cleanup_state_manager
+from .state_manager import cleanup_state_manager, get_state_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -224,7 +224,9 @@ class WebMultiTurnEngine:
                     self.add_stream_output(command_to_execute, trace_id)
                     self.add_stream_output("", trace_id)
                     # Store the command for later execution in database
-                    state_manager.save_pending_execution(self.session_id, command_to_execute, True)
+                    state_manager.save_pending_execution(
+                        self.session_id, command_to_execute, True
+                    )
 
             if stderr_content:
                 for line in stderr_content.strip().split("\n"):
@@ -334,11 +336,11 @@ class WebMultiTurnEngine:
                 "mode": mode,
                 "files_count": len(files_dict),
             }
-            
+
             # Store generated files in session for later execution
             session = state_manager.get_or_create_session(self.session_id)
             session.current_files = files_dict
-            
+
             # Also update the engine's current_files
             self.engine.current_files = files_dict
 
@@ -407,7 +409,7 @@ class WebMultiTurnEngine:
     def has_pending_execution(self) -> bool:
         """Check if there's pending execution for this session."""
         return state_manager.has_pending_execution(self.session_id)
-    
+
     @property
     def pending_execution(self) -> Optional[Dict]:
         """Get pending execution data."""
@@ -486,17 +488,19 @@ def create_preprompts_holder(project_path: str) -> PrepromptsHolder:
     return PrepromptsHolder(PREPROMPTS_PATH)
 
 
-def recreate_engine_with_files(session_id: str, project_path: str) -> 'WebMultiTurnEngine':
+def recreate_engine_with_files(
+    session_id: str, project_path: str
+) -> "WebMultiTurnEngine":
     """
     Recreate an engine and load current files from the session.
-    
+
     Parameters
     ----------
     session_id : str
         The session ID.
     project_path : str
         The project path.
-        
+
     Returns
     -------
     WebMultiTurnEngine
@@ -505,13 +509,15 @@ def recreate_engine_with_files(session_id: str, project_path: str) -> 'WebMultiT
     ai = create_ai_instance()
     preprompts_holder = create_preprompts_holder(project_path)
     engine = WebMultiTurnEngine(ai, project_path, preprompts_holder, session_id)
-    
+
     # Load current files from session database
     current_files = state_manager.session_file_repo.get_session_files(session_id)
     if current_files:
         engine.engine.current_files = current_files
-        logger.info(f"Loaded {len(current_files)} files into recreated engine for session {session_id}")
-    
+        logger.info(
+            f"Loaded {len(current_files)} files into recreated engine for session {session_id}"
+        )
+
     return engine
 
 
@@ -524,6 +530,12 @@ CORS(app)
 def index():
     """Serve the main web interface."""
     return render_template("index.html")
+
+
+@app.route("/health")
+def health_check():
+    """Health check endpoint for load balancers and monitoring."""
+    return jsonify({"status": "healthy", "service": "gpt-engineer-web"}), 200
 
 
 @app.route("/api/chat", methods=["POST"])
@@ -563,24 +575,28 @@ def chat():
             project_path = f"projects/web_session_{session_id}"
 
             # Create session in database
-            active_session = state_manager.get_or_create_session(session_id, project_path)
+            active_session = state_manager.get_or_create_session(
+                session_id, project_path
+            )
             state_manager.set_active_session(session_id)
-            
+
             # Create engine and store reference
             active_session.engine = recreate_engine_with_files(session_id, project_path)
-            
+
             logger.info(f"Session created successfully: {active_session.session_id}")
         else:
             # Reuse existing session for multi-turn conversation
             logger.info(f"Reusing existing session: {session_id}")
-            
+
             # Ensure engine exists for the session (it's transient and not persisted in DB)
-            if not hasattr(active_session, 'engine') or not active_session.engine:
+            if not hasattr(active_session, "engine") or not active_session.engine:
                 logger.info(f"Recreating engine for existing session: {session_id}")
-                active_session.engine = recreate_engine_with_files(session_id, active_session.project_path)
-            
+                active_session.engine = recreate_engine_with_files(
+                    session_id, active_session.project_path
+                )
+
             # Clear stream output for new prompt in existing session
-            if hasattr(active_session, 'engine') and active_session.engine:
+            if hasattr(active_session, "engine") and active_session.engine:
                 active_session.engine.clear_stream_output()
             # Update last activity
             active_session.update_last_activity()
@@ -693,30 +709,36 @@ def execute_code():
         user_confirmed = user_response.lower() in ["", "y", "yes"]
         if not user_confirmed:
             logger.info("User declined execution")
-            
+
             # Ensure we have an engine for stream output - recreate if missing
-            if not hasattr(active_session, 'engine') or not active_session.engine:
-                logger.info(f"Recreating engine for decline message in session: {session_id}")
-                active_session.engine = recreate_engine_with_files(session_id, active_session.project_path)
-            
+            if not hasattr(active_session, "engine") or not active_session.engine:
+                logger.info(
+                    f"Recreating engine for decline message in session: {session_id}"
+                )
+                active_session.engine = recreate_engine_with_files(
+                    session_id, active_session.project_path
+                )
+
             active_session.engine.add_stream_output("Ok, not executing the code.")
             # Clear pending execution when user declines
             state_manager.clear_pending_execution(session_id)
             # Clear stream output when user declines
             active_session.engine.clear_stream_output()
-            
+
             return jsonify(
                 {"success": True, "message": "Execution declined", "executed": False}
             )
 
         # User confirmed execution
         logger.info("User confirmed execution")
-        
+
         # Ensure we have an engine before proceeding - recreate if missing
-        if not hasattr(active_session, 'engine') or not active_session.engine:
+        if not hasattr(active_session, "engine") or not active_session.engine:
             logger.info(f"Recreating engine for execution in session: {session_id}")
-            active_session.engine = recreate_engine_with_files(session_id, active_session.project_path)
-            
+            active_session.engine = recreate_engine_with_files(
+                session_id, active_session.project_path
+            )
+
         active_session.engine.add_stream_output("Executing the code...")
         active_session.engine.add_stream_output("")
         active_session.engine.add_stream_output(
@@ -753,7 +775,7 @@ def execute_code():
         # Execute the pending command
         pending_execution = state_manager.get_pending_execution(session_id)
         if pending_execution:
-            command = pending_execution["command"]
+            pending_execution["command"]
 
             try:
                 # Import the execute_entrypoint_next function
@@ -867,7 +889,7 @@ def execute_code():
             except Exception as e:
                 error_msg = f"Error executing code: {e}"
                 logger.error(error_msg)
-                if hasattr(active_session, 'engine') and active_session.engine:
+                if hasattr(active_session, "engine") and active_session.engine:
                     active_session.engine.add_stream_output(error_msg)
                     # Clear stream output after error
                     active_session.engine.clear_stream_output()
@@ -876,8 +898,9 @@ def execute_code():
 
                 # End the current trace with error output
                 if (
-                    hasattr(active_session, 'engine') and active_session.engine and
-                    hasattr(active_session.engine, "current_trace_id")
+                    hasattr(active_session, "engine")
+                    and active_session.engine
+                    and hasattr(active_session.engine, "current_trace_id")
                     and active_session.engine.current_trace_id
                 ):
                     try:
@@ -977,7 +1000,11 @@ def get_session_status(session_id: str):
             )
 
         has_pending_execution = state_manager.has_pending_execution(session_id)
-        pending_execution = state_manager.get_pending_execution(session_id) if has_pending_execution else None
+        pending_execution = (
+            state_manager.get_pending_execution(session_id)
+            if has_pending_execution
+            else None
+        )
 
         return jsonify(
             {
@@ -1173,9 +1200,9 @@ def list_sessions():
         sessions = state_manager.list_sessions()
         # Add trace count for each session
         for session in sessions:
-            traces = state_manager.trace_repo.get_session_traces(session['session_id'])
-            session['trace_count'] = len(traces)
-        
+            traces = state_manager.trace_repo.get_session_traces(session["session_id"])
+            session["trace_count"] = len(traces)
+
         return jsonify({"success": True, "sessions": sessions})
     except Exception as e:
         logger.error(f"Error listing sessions: {e}")
@@ -1206,7 +1233,7 @@ def delete_session(session_id: str):
 
         # Delete session from database (cascades to all related data)
         success = state_manager.delete_session(session_id)
-        
+
         if success:
             return jsonify({"success": True, "message": "Session deleted"})
         else:
@@ -1228,13 +1255,17 @@ def reset_all_sessions():
     try:
         # Clean up active session if it exists
         active_session = state_manager.get_active_session()
-        if active_session and hasattr(active_session, "engine") and active_session.engine:
+        if (
+            active_session
+            and hasattr(active_session, "engine")
+            and active_session.engine
+        ):
             active_session.engine.cleanup()
 
         # Note: We don't actually delete sessions from database on reset
         # as this is just a page refresh. Sessions remain in database
         # for persistence across browser sessions.
-        
+
         logger.info("All sessions reset")
 
         return jsonify({"success": True, "message": "All sessions reset"})
@@ -1287,7 +1318,7 @@ def submit_feedback():
 
         # Find the trace in database
         trace_data = state_manager.trace_repo.get_trace(trace_id)
-        if not trace_data or trace_data['session_id'] != session_id:
+        if not trace_data or trace_data["session_id"] != session_id:
             logger.error(f"❌ Trace {trace_id} not found in session {session_id}")
             return jsonify({"success": False, "error": "Trace not found"}), 404
 
@@ -1299,25 +1330,43 @@ def submit_feedback():
         # Get active session for observability if available
         active_session = state_manager.get_active_session()
         engine = None
-        
+
         # Check if we have an active session with an engine
-        if active_session and active_session.session_id == session_id and hasattr(active_session, "engine") and active_session.engine:
+        if (
+            active_session
+            and active_session.session_id == session_id
+            and hasattr(active_session, "engine")
+            and active_session.engine
+        ):
             engine = active_session.engine
             logger.info("🔧 Engine found in session data")
         else:
             # No active engine - recreate for observability if this is the correct session
             if active_session and active_session.session_id == session_id:
                 logger.info("🔄 Recreating engine for observability feedback")
-                active_session.engine = recreate_engine_with_files(session_id, active_session.project_path)
+                active_session.engine = recreate_engine_with_files(
+                    session_id, active_session.project_path
+                )
                 engine = active_session.engine
             else:
                 # Different session or no active session - create temporary session for feedback
-                logger.info(f"🔄 Creating temporary session for feedback observability in session {session_id}")
-                temp_session = state_manager.get_or_create_session(session_id, session_data['project_path'])
-                temp_session.engine = recreate_engine_with_files(session_id, session_data['project_path'])
+                logger.info(
+                    f"🔄 Creating temporary session for feedback observability in session {session_id}"
+                )
+                temp_session = state_manager.get_or_create_session(
+                    session_id, session_data["project_path"]
+                )
+                temp_session.engine = recreate_engine_with_files(
+                    session_id, session_data["project_path"]
+                )
                 engine = temp_session.engine
 
-        if engine and hasattr(engine, "observability") and engine.observability and engine.observability.is_enabled():
+        if (
+            engine
+            and hasattr(engine, "observability")
+            and engine.observability
+            and engine.observability.is_enabled()
+        ):
             logger.info("📊 Observability is enabled, adding feedback")
             try:
                 # Validate session state before adding feedback
@@ -1393,9 +1442,7 @@ def submit_feedback():
                 #     f"✅ Feedback submitted successfully: {feedback_score} for session {session_id}, trace {trace_id}"
                 # )
             except Exception as obs_error:
-                logger.error(
-                    f"💥 Error adding feedback to observability: {obs_error}"
-                )
+                logger.error(f"💥 Error adding feedback to observability: {obs_error}")
                 return (
                     jsonify(
                         {
@@ -1434,7 +1481,7 @@ if __name__ == "__main__":
     finally:
         # Clean up database connections
         cleanup_state_manager()
-        
+
         # Clean up global observability
         if observability and observability.is_enabled():
             try:

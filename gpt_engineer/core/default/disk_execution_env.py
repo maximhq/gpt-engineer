@@ -32,13 +32,8 @@ from gpt_engineer.core.base_execution_env import BaseExecutionEnv
 from gpt_engineer.core.default.file_store import FileStore
 from gpt_engineer.core.files_dict import FilesDict
 
-# Import observability
-try:
-    from gpt_engineer.core.maxim_observability import get_observability
-
-    OBSERVABILITY_AVAILABLE = True
-except ImportError:
-    OBSERVABILITY_AVAILABLE = False
+# Observability is available but not actively used in this module
+OBSERVABILITY_AVAILABLE = True
 
 
 class DiskExecutionEnv(BaseExecutionEnv):
@@ -60,7 +55,9 @@ class DiskExecutionEnv(BaseExecutionEnv):
     def __init__(self, path: Union[str, Path, None] = None):
         self.files = FileStore(path)
 
-    def upload(self, files: FilesDict, parent_span_id: str = None) -> "DiskExecutionEnv":
+    def upload(
+        self, files: FilesDict, parent_span_id: str = None
+    ) -> "DiskExecutionEnv":
         self.files.push(files, parent_span_id=parent_span_id)
         return self
 
@@ -219,8 +216,8 @@ class DiskExecutionEnv(BaseExecutionEnv):
         #                         "success": str(return_code == 0),
         #                     },
         #                 )
-            # except Exception:
-            #     # Continue without observability if it fails
-            #     pass
+        # except Exception:
+        #     # Continue without observability if it fails
+        #     pass
 
         return stdout_full, stderr_full, return_code

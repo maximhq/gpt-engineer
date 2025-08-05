@@ -21,7 +21,6 @@ import fnmatch
 import os
 import subprocess
 
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Union
 
@@ -32,13 +31,8 @@ from gpt_engineer.core.default.paths import metadata_path
 from gpt_engineer.core.files_dict import FilesDict
 from gpt_engineer.core.git import filter_by_gitignore, is_git_repo
 
-# Import observability
-try:
-    from gpt_engineer.core.maxim_observability import get_observability
-
-    OBSERVABILITY_AVAILABLE = True
-except ImportError:
-    OBSERVABILITY_AVAILABLE = False
+# Observability is available but not actively used in this module
+OBSERVABILITY_AVAILABLE = True
 
 
 class FileSelector:
@@ -428,10 +422,8 @@ class FileSelector:
                 all_files.append(str(relpath))
 
         # Apply git filtering if applicable
-        git_filtered = False
         if is_git_repo(project_path) and "projects" not in project_path.parts:
             all_files = filter_by_gitignore(project_path, all_files)
-            git_filtered = True
 
         result = sorted(all_files, key=lambda x: Path(x).as_posix())
 

@@ -23,8 +23,8 @@ allowing for the dynamic application of changes to code bases and the efficient 
 
 import logging
 import re
-from subprocess import TimeoutExpired
 
+from subprocess import TimeoutExpired
 from typing import Dict, Tuple
 
 from regex import regex
