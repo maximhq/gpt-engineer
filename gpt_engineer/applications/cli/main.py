@@ -1303,8 +1303,16 @@ def execute_gpt_engineer(config: CliConfig) -> None:
 
                 observability.flush_data()
 
-                # End session
+                # End session with validation
                 if session_id:
+                    if hasattr(observability, "validate_session_state"):
+                        if not observability.validate_session_state():
+                            logging.warning(
+                                "Session state validation failed during cleanup, attempting recovery"
+                            )
+                            if hasattr(observability, "recover_session_state"):
+                                observability.recover_session_state()
+
                     observability.end_session()
 
                 # Cleanup SDK
@@ -1313,6 +1321,14 @@ def execute_gpt_engineer(config: CliConfig) -> None:
 
             except Exception as e:
                 logging.warning(f"Failed to cleanup observability: {e}")
+                # Try to force cleanup even if there are errors
+                try:
+                    if hasattr(observability, "flush_data"):
+                        observability.flush_data()
+                    if hasattr(observability, "cleanup"):
+                        observability.cleanup()
+                except Exception as force_cleanup_error:
+                    logging.error(f"Force cleanup also failed: {force_cleanup_error}")
 
 
 def create_config_from_args(

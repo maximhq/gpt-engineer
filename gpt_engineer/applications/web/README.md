@@ -56,7 +56,7 @@ gpte-web --help
 
 Available options:
 - `--host`: Host to bind the server to (default: 127.0.0.1)
-- `--port`: Port to bind the server to (default: 5000)
+- `--port`: Port to bind the server to (default: 5001)
 - `--debug`: Enable debug mode
 - `--reload`: Enable auto-reload on code changes
 
@@ -80,7 +80,7 @@ gpte-web --host 0.0.0.0 --port 8080
 
 Once the server is running, open your browser and navigate to:
 ```
-http://localhost:5000
+http://localhost:5001
 ```
 
 ### Interface Components

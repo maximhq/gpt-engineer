@@ -26,4 +26,7 @@ COPY --from=builder /app .
 
 COPY docker/entrypoint.sh .
 
+# Expose port for web UI
+EXPOSE 5000
+
 ENTRYPOINT ["bash", "/app/entrypoint.sh"]

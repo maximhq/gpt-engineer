@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GPT Engineer Web UI</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -190,12 +191,12 @@
             background-color: #30363d;
             cursor: not-allowed;
         }
-
+/*
         .input-actions {
             display: flex;
             gap: 10px;
             margin-top: 10px;
-        }
+        } */
 
         .action-button {
             width: 32px;
@@ -306,6 +307,7 @@
             cursor: pointer;
             border-radius: 4px;
             transition: background-color 0.2s;
+            position: relative;
         }
 
         .file-item:hover {
@@ -337,6 +339,39 @@
 
         .file-item:last-child {
             border-bottom: none;
+        }
+
+        .file-download-btn {
+            background: none;
+            border: 1px solid #238636;
+            border-radius: 4px;
+            padding: 4px 6px;
+            cursor: pointer;
+            color: #238636;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: auto;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .file-item:hover .file-download-btn {
+            opacity: 1;
+        }
+
+        .file-download-btn:hover {
+            background-color: #238636;
+            color: white;
+            border-color: #238636;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(35, 134, 54, 0.3);
+        }
+
+        .file-download-btn:active {
+            transform: scale(0.95) translateY(0);
+            box-shadow: 0 1px 2px rgba(35, 134, 54, 0.3);
         }
 
         .file-icon {
@@ -471,6 +506,77 @@
             border-color: #f85149;
         }
 
+        /* Execution Confirmation Styles */
+        .execution-prompt {
+            background-color: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+            color: #c9d1d9;
+        }
+
+        .execution-prompt h4 {
+            margin: 0 0 15px 0;
+            color: #f0f6fc;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .execution-command {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+            margin: 15px 0;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+
+        .execution-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .execution-btn {
+            padding: 8px 16px;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            background-color: transparent;
+            color: #c9d1d9;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .execution-btn:hover {
+            background-color: #30363d;
+        }
+
+        .execution-btn.primary {
+            background-color: #1f6feb;
+            border-color: #1f6feb;
+            color: white;
+        }
+
+        .execution-btn.primary:hover {
+            background-color: #1a5fcc;
+        }
+
+        .execution-btn.danger {
+            background-color: #f85149;
+            border-color: #f85149;
+            color: white;
+        }
+
+        .execution-btn.danger:hover {
+            background-color: #da3633;
+        }
+
         /* Feedback Notification */
         .feedback-notification {
             position: fixed;
@@ -538,6 +644,89 @@
 
         .stream-line:last-child {
             margin-bottom: 0;
+        }
+
+        /* Stream container for trace history */
+        .stream-container {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .stream-header {
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #30363d;
+        }
+
+        .stream-header h4 {
+            color: #f0f6fc;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .stream-header p {
+            color: #8b949e;
+            font-size: 12px;
+            margin: 0;
+        }
+
+        /* Trace View Styles */
+        .trace-view-container {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .trace-header {
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #30363d;
+        }
+
+        .trace-header h4 {
+            color: #f0f6fc;
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .trace-header p {
+            color: #8b949e;
+            font-size: 14px;
+            margin: 0;
+        }
+
+        .trace-files-section,
+        .trace-stream-section {
+            margin-bottom: 20px;
+        }
+
+        .trace-files-section h5,
+        .trace-stream-section h5 {
+            color: #f0f6fc;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .trace-files-section .file-tree {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .trace-stream-section .stream-container {
+            max-height: 300px;
+            overflow-y: auto;
         }
 
         /* Auto-scroll animation */
@@ -610,7 +799,7 @@
                         </svg>
                     </button>
                 </div>
-                <div class="input-actions">
+                <!-- <div class="input-actions">
                     <button class="action-button" title="Attach file">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
@@ -637,7 +826,7 @@
                             <line x1="9" y1="15" x2="15" y2="15"/>
                         </svg>
                     </button>
-                </div>
+                </div> -->
             </div>
         </div>
 
@@ -657,7 +846,7 @@
                 </div>
             </div>
 
-            <div class="preview-footer">
+            <!-- <div class="preview-footer">
                 <a href="#" class="footer-link">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"/>
@@ -672,7 +861,7 @@
                     </svg>
                     Join our Community
                 </a>
-            </div>
+            </div> -->
         </div>
     </div>
 
@@ -689,6 +878,7 @@
                 this.feedbackStates = new Map(); // Store feedback state per trace
                 this.promptFiles = new Map(); // Store files per prompt
                 this.sessionTraces = new Map(); // Store trace data per session
+                this.traceViewFiles = {}; // Store files for current trace view
                 this.initializeElements();
                 this.bindEvents();
                 this.resetState();
@@ -804,20 +994,17 @@
                 const messageDiv = document.createElement('div');
                 messageDiv.className = `message ${type}`;
 
-                // Make agent messages clickable if they have files
-                if (type === 'agent' && traceId && this.promptFiles.has(traceId)) {
+                // Make agent messages clickable if they have files or stream history
+                if (type === 'agent' && traceId) {
                     messageDiv.classList.add('clickable');
                     messageDiv.setAttribute('data-trace-id', traceId);
 
-                    // Add click handler to show files
+                    // Add click handler to show files and stream history
                     messageDiv.addEventListener('click', (e) => {
                         // Don't trigger if clicking feedback buttons
                         if (!e.target.closest('.feedback-buttons')) {
-                            const files = this.promptFiles.get(traceId);
-                            if (files) {
-                                this.switchTab('code');
-                                this.updateCodePreview(files);
-                            }
+                            // Load both files and stream history for this trace
+                            this.loadTraceData(traceId);
                         }
                     });
                 }
@@ -857,7 +1044,7 @@
                         ${feedbackButtons}
                     </div>
                     <div class="message-content">${content}</div>
-                    ${type === 'agent' && traceId && this.promptFiles.has(traceId) ? '<div class="message-files-indicator">Click to view files</div>' : ''}
+                    ${type === 'agent' && traceId ? '<div class="message-files-indicator">Click to view files & CLI output</div>' : ''}
                 `;
 
                 this.chatMessages.appendChild(messageDiv);
@@ -1026,7 +1213,17 @@
             updateCodePreview(files) {
                 if (files && Object.keys(files).length > 0) {
                     let previewHTML = '<div class="file-tree">';
+                    previewHTML += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">';
                     previewHTML += '<h3>Generated Files</h3>';
+                    previewHTML += '<button class="file-download-btn" onclick="window.gptEngineerUI.downloadAllFiles()" title="Download all files">';
+                    previewHTML += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">';
+                    previewHTML += '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>';
+                    previewHTML += '<polyline points="7,10 12,15 17,10"/>';
+                    previewHTML += '<line x1="12" y1="15" x2="12" y2="3"/>';
+                    previewHTML += '</svg>';
+                    previewHTML += ' Download All';
+                    previewHTML += '</button>';
+                    previewHTML += '</div>';
 
                     // Store file contents and create clickable file list
                     let isFirst = true;
@@ -1045,6 +1242,13 @@
                                     <polyline points="14,2 14,8 20,8"/>
                                 </svg>
                                 <span class="file-name">${filename}</span>
+                                <button class="file-download-btn" data-filename="${escapedFilename}" title="Download file">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="7,10 12,15 17,10"/>
+                                        <line x1="12" y1="15" x2="12" y2="3"/>
+                                    </svg>
+                                </button>
                             </div>
                         `;
                         isFirst = false;
@@ -1064,6 +1268,13 @@
                                         <polyline points="14,2 14,8 20,8"/>
                                     </svg>
                                     <strong>${filename}</strong>
+                                    <button class="file-download-btn" onclick="window.gptEngineerUI.downloadFile('${this.escapeHtml(filename)}', \`${this.escapeHtml(content)}\`)">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                            <polyline points="7,10 12,15 17,10"/>
+                                            <line x1="12" y1="15" x2="12" y2="3"/>
+                                        </svg>
+                                    </button>
                                 </div>
                                 <pre>${this.escapeHtml(content)}</pre>
                             </div>
@@ -1075,10 +1286,26 @@
                     // Add click event listeners to file items
                     const fileItems = this.previewContent.querySelectorAll('.file-item');
                     fileItems.forEach(item => {
-                        item.addEventListener('click', () => {
-                            const filename = item.getAttribute('data-filename');
+                        item.addEventListener('click', (e) => {
+                            // Don't trigger if clicking download button
+                            if (!e.target.closest('.file-download-btn')) {
+                                const filename = item.getAttribute('data-filename');
+                                const content = this.fileContents[filename];
+                                this.selectFile(filename, content);
+                            }
+                        });
+                    });
+
+                    // Add event listeners to download buttons
+                    const downloadButtons = this.previewContent.querySelectorAll('.file-download-btn');
+                    downloadButtons.forEach(button => {
+                        button.addEventListener('click', (e) => {
+                            e.stopPropagation(); // Prevent triggering file view
+                            const filename = button.getAttribute('data-filename');
                             const content = this.fileContents[filename];
-                            this.selectFile(filename, content);
+                            if (filename && content) {
+                                this.downloadFile(filename, content);
+                            }
                         });
                     });
 
@@ -1105,8 +1332,15 @@
                                 <polyline points="14,2 14,8 20,8"/>
                             </svg>
                             <strong>${filename}</strong>
+                            <button class="file-download-btn" onclick="window.gptEngineerUI.downloadFile('${this.escapeHtml(filename)}', \`${this.escapeHtml(content)}\`)">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7,10 12,15 17,10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                            </button>
                         </div>
-                        <pre>${content}</pre>
+                        <pre>${this.escapeHtml(content)}</pre>
                     `;
                 }
 
@@ -1127,11 +1361,44 @@
                     previewHTML += '<h3>CLI Output</h3>';
                     previewHTML += '<div class="stream-content">';
 
+                    let executionPromptShown = false;
+                    let commandToExecute = null;
+
                     for (const message of this.streamHistory) {
+                        // Check if this is an execution confirmation prompt
+                        if (message.includes("Do you want to execute this code? (Y/n)")) {
+                            executionPromptShown = true;
+                            // Look for the command in the next few messages
+                            const currentIndex = this.streamHistory.indexOf(message);
+                            for (let i = currentIndex + 1; i < Math.min(currentIndex + 5, this.streamHistory.length); i++) {
+                                const nextMessage = this.streamHistory[i];
+                                if (nextMessage && nextMessage.trim() && !nextMessage.includes("Do you want to execute this code?")) {
+                                    commandToExecute = nextMessage;
+                                    break;
+                                }
+                            }
+                            break;
+                        }
                         previewHTML += `<div class="stream-line">${this.escapeHtml(message)}</div>`;
                     }
 
                     previewHTML += '</div></div>';
+
+                    // If execution confirmation was detected, add the prompt
+                    if (executionPromptShown && commandToExecute) {
+                        previewHTML += `
+                            <div class="execution-prompt">
+                                <h4>Execute Code?</h4>
+                                <p>The following code will be executed:</p>
+                                <div class="execution-command">${this.escapeHtml(commandToExecute)}</div>
+                                <div class="execution-buttons">
+                                    <button class="execution-btn danger" onclick="window.gptEngineerUI.handleExecution(false)">No</button>
+                                    <button class="execution-btn primary" onclick="window.gptEngineerUI.handleExecution(true)">Yes</button>
+                                </div>
+                            </div>
+                        `;
+                    }
+
                     this.previewContent.innerHTML = previewHTML;
                     this.scrollToBottom();
                 } else {
@@ -1162,6 +1429,11 @@
                         if (data.type === 'message') {
                             this.streamHistory.push(data.message);
                             this.updateStreamPreview();
+                        } else if (data.type === 'stream_cleared') {
+                            // Clear the stream display when stream is cleared
+                            this.streamHistory = [];
+                            this.updateStreamPreview();
+                            console.log('Stream cleared');
                         } else if (data.type === 'connected') {
                             console.log('Stream connected');
                         } else if (data.type === 'ping') {
@@ -1206,6 +1478,7 @@
                 this.promptFiles.clear();
                 this.feedbackStates.clear();
                 this.sessionTraces.clear();
+                this.traceViewFiles = {};
 
                 // Close any existing event source
                 if (this.eventSource) {
@@ -1229,6 +1502,39 @@
                 this.previewTab.classList.add('active');
 
                 console.log('Agent state reset - ready for new session');
+            }
+
+            async handleExecution(execute) {
+                if (!this.sessionId) return;
+
+                try {
+                    const response = await fetch('/api/execute', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            session_id: this.sessionId,
+                            confirm: execute
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        if (execute) {
+                            this.addMessage(`Code executed successfully. ${result.message}`, 'agent');
+                        } else {
+                            this.addMessage(`Execution declined. ${result.message}`, 'agent');
+                        }
+                        // Restart streaming to get updated output
+                        this.startStreaming();
+                    } else {
+                        this.addMessage(`Error: ${result.error}`, 'agent');
+                    }
+                } catch (error) {
+                    this.addMessage(`Error during execution: ${error.message}`, 'agent');
+                }
             }
 
             async handlePageRefresh() {
@@ -1388,6 +1694,359 @@
                         timestamp: trace.timestamp
                     });
                 });
+            }
+
+            async loadTraceData(traceId) {
+                if (!this.sessionId || !traceId) return;
+
+                // Get files for this trace
+                const files = this.promptFiles.get(traceId);
+
+                // Load stream history
+                let streamMessages = [];
+                try {
+                    const response = await fetch(`/api/stream/${this.sessionId}/trace/${traceId}/history`);
+                    const result = await response.json();
+
+                    if (result.success && result.messages) {
+                        streamMessages = result.messages;
+                        console.log(`✅ Loaded stream history for trace ${traceId} with ${result.messages.length} messages`);
+                    } else {
+                        console.log(`No stream history found for trace ${traceId}`);
+                    }
+                } catch (error) {
+                    console.error(`Error loading trace stream history: ${error}`);
+                }
+
+                // Show combined view with both files and stream history
+                this.showCombinedTraceView(traceId, files, streamMessages);
+            }
+
+            showCombinedTraceView(traceId, files, streamMessages) {
+                // Switch to preview tab for the combined view
+                this.switchTab('preview');
+
+                // Store files for this trace view
+                this.traceViewFiles = files || {};
+
+                let previewHTML = `
+                    <div class="trace-view-container">
+                        <div class="trace-header">
+                            <h4>Prompt Details</h4>
+                            <p>Showing files and CLI output for this specific prompt</p>
+                        </div>
+                `;
+
+                // Add files section if files exist
+                if (files && Object.keys(files).length > 0) {
+                    previewHTML += `
+                        <div class="trace-files-section">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h5>Generated Files (${Object.keys(files).length})</h5>
+                                <button class="file-download-btn" onclick="window.gptEngineerUI.downloadAllFilesFromTrace()" title="Download all files">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="white" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="7,10 12,15 17,10"/>
+                                        <line x1="12" y1="15" x2="12" y2="3"/>
+                                    </svg>
+                                    Download All
+                                </button>
+                            </div>
+                            <div class="file-tree">
+                    `;
+
+                    for (const [filename, content] of Object.entries(files)) {
+                        previewHTML += `
+                            <div class="file-item" data-filename="${this.escapeHtml(filename)}">
+                                <span class="file-icon">📄</span>
+                                <span class="file-name">${this.escapeHtml(filename)}</span>
+                                <button class="file-download-btn" data-filename="${this.escapeHtml(filename)}" title="Download file">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="7,10 12,15 17,10"/>
+                                        <line x1="12" y1="15" x2="12" y2="3"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        `;
+                    }
+
+                    previewHTML += `
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // Add stream history section
+                if (streamMessages.length > 0) {
+                    previewHTML += `
+                        <div class="trace-stream-section">
+                            <h5>CLI Output</h5>
+                            <div class="stream-container">
+                                <div class="stream-content">
+                    `;
+
+                    for (const message of streamMessages) {
+                        previewHTML += `<div class="stream-line">${this.escapeHtml(message)}</div>`;
+                    }
+
+                    previewHTML += `
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    previewHTML += `
+                        <div class="trace-stream-section">
+                            <h5>CLI Output</h5>
+                            <div class="stream-container">
+                                <div class="stream-content">
+                                    <div class="stream-line">No CLI output available for this prompt</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                previewHTML += '</div>';
+                this.previewContent.innerHTML = previewHTML;
+
+                // Add event listeners to file items
+                const fileItems = this.previewContent.querySelectorAll('.file-item');
+                fileItems.forEach(item => {
+                    item.addEventListener('click', (e) => {
+                        // Don't trigger if clicking download button
+                        if (!e.target.closest('.file-download-btn')) {
+                            const filename = item.getAttribute('data-filename');
+                            if (filename && this.traceViewFiles[filename]) {
+                                this.showFileContent(filename, this.traceViewFiles[filename]);
+                            }
+                        }
+                    });
+                });
+
+                // Add event listeners to download buttons
+                const downloadButtons = this.previewContent.querySelectorAll('.file-download-btn');
+                downloadButtons.forEach(button => {
+                    button.addEventListener('click', (e) => {
+                        e.stopPropagation(); // Prevent triggering file view
+                        const filename = button.getAttribute('data-filename');
+                        if (filename && this.traceViewFiles[filename]) {
+                            this.downloadFile(filename, this.traceViewFiles[filename]);
+                        }
+                    });
+                });
+            }
+
+            showFileContent(filename, content) {
+                // Switch to code tab and show the specific file
+                this.switchTab('code');
+                this.updateCodePreview({ [filename]: content });
+            }
+
+            downloadFile(filename, content) {
+                // Create a blob with the file content
+                const blob = new Blob([content], { type: 'text/plain' });
+
+                // Create a download link
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+
+                // Trigger download
+                document.body.appendChild(a);
+                a.click();
+
+                // Clean up
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+
+                console.log(`✅ Downloaded file: ${filename}`);
+            }
+
+            downloadAllFiles() {
+                if (!this.currentFiles || Object.keys(this.currentFiles).length === 0) {
+                    console.log('No files to download');
+                    return;
+                }
+
+                // Create a zip file using JSZip
+                if (typeof JSZip === 'undefined') {
+                    // Fallback: download files one by one
+                    console.log('JSZip not available, downloading files individually...');
+                    for (const [filename, content] of Object.entries(this.currentFiles)) {
+                        this.downloadFile(filename, content);
+                    }
+                    return;
+                }
+
+                const zip = new JSZip();
+
+                // Add all files to the zip
+                for (const [filename, content] of Object.entries(this.currentFiles)) {
+                    zip.file(filename, content);
+                }
+
+                // Generate and download the zip file
+                zip.generateAsync({ type: 'blob' }).then((blob) => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'gpt-engineer-files.zip';
+
+                    // Trigger download
+                    document.body.appendChild(a);
+                    a.click();
+
+                    // Clean up
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+
+                    console.log(`✅ Downloaded all files as zip`);
+                }).catch((error) => {
+                    console.error('Error creating zip file:', error);
+                    // Fallback: download files one by one
+                    for (const [filename, content] of Object.entries(this.currentFiles)) {
+                        this.downloadFile(filename, content);
+                    }
+                });
+            }
+
+            downloadAllFilesFromTrace() {
+                if (!this.traceViewFiles || Object.keys(this.traceViewFiles).length === 0) {
+                    console.log('No files to download from trace');
+                    return;
+                }
+
+                // Create a zip file using JSZip
+                if (typeof JSZip === 'undefined') {
+                    // Fallback: download files one by one
+                    console.log('JSZip not available, downloading files individually...');
+                    for (const [filename, content] of Object.entries(this.traceViewFiles)) {
+                        this.downloadFile(filename, content);
+                    }
+                    return;
+                }
+
+                const zip = new JSZip();
+
+                // Add all files to the zip
+                for (const [filename, content] of Object.entries(this.traceViewFiles)) {
+                    zip.file(filename, content);
+                }
+
+                // Generate and download the zip file
+                zip.generateAsync({ type: 'blob' }).then((blob) => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'gpt-engineer-trace-files.zip';
+
+                    // Trigger download
+                    document.body.appendChild(a);
+                    a.click();
+
+                    // Clean up
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+
+                    console.log(`✅ Downloaded all trace files as zip`);
+                }).catch((error) => {
+                    console.error('Error creating zip file:', error);
+                    // Fallback: download files one by one
+                    for (const [filename, content] of Object.entries(this.traceViewFiles)) {
+                        this.downloadFile(filename, content);
+                    }
+                });
+            }
+
+            async loadTraceStreamHistory(traceId) {
+                if (!this.sessionId || !traceId) return;
+
+                try {
+                    const response = await fetch(`/api/stream/${this.sessionId}/trace/${traceId}/history`);
+                    const result = await response.json();
+
+                    if (result.success && result.messages) {
+                        // Switch to preview tab to show stream history
+                        this.switchTab('preview');
+
+                        // Update the stream preview with trace-specific history
+                        this.updateStreamPreviewWithHistory(result.messages);
+
+                        console.log(`✅ Loaded stream history for trace ${traceId} with ${result.messages.length} messages`);
+                    } else {
+                        console.log(`No stream history found for trace ${traceId}`);
+                        // Show a message that no stream history is available
+                        this.updateStreamPreviewWithHistory([]);
+                    }
+                } catch (error) {
+                    console.error(`Error loading trace stream history: ${error}`);
+                    this.updateStreamPreviewWithHistory([]);
+                }
+            }
+
+            updateStreamPreviewWithHistory(messages) {
+                if (messages.length === 0) {
+                    this.previewContent.innerHTML = `
+                        <div class="preview-placeholder">
+                            <div class="preview-logo">📝</div>
+                            <div>No CLI output available for this prompt</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let previewHTML = `
+                    <div class="stream-container">
+                        <div class="stream-header">
+                            <h4>CLI Output History</h4>
+                            <p>Showing output from this specific prompt</p>
+                        </div>
+                        <div class="stream-content">
+                `;
+
+                let executionPromptShown = false;
+                let commandToExecute = null;
+
+                for (const message of messages) {
+                    // Check if this is an execution confirmation prompt
+                    if (message.includes("Do you want to execute this code? (Y/n)")) {
+                        executionPromptShown = true;
+                        // Look for the command in the next few messages
+                        const currentIndex = messages.indexOf(message);
+                        for (let i = currentIndex + 1; i < Math.min(currentIndex + 5, messages.length); i++) {
+                            const nextMessage = messages[i];
+                            if (nextMessage && nextMessage.trim() && !nextMessage.includes("Do you want to execute this code?")) {
+                                commandToExecute = nextMessage;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                    previewHTML += `<div class="stream-line">${this.escapeHtml(message)}</div>`;
+                }
+
+                previewHTML += '</div></div>';
+
+                // If execution confirmation was detected, add the prompt
+                if (executionPromptShown && commandToExecute) {
+                    previewHTML += `
+                        <div class="execution-prompt">
+                            <h4>Execute Code?</h4>
+                            <p>The following code will be executed:</p>
+                            <div class="execution-command">${this.escapeHtml(commandToExecute)}</div>
+                            <div class="execution-buttons">
+                                <button class="execution-btn danger" onclick="window.gptEngineerUI.handleExecution(false)">No</button>
+                                <button class="execution-btn primary" onclick="window.gptEngineerUI.handleExecution(true)">Yes</button>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                this.previewContent.innerHTML = previewHTML;
+                this.scrollToBottom();
             }
 
             escapeHtml(text) {

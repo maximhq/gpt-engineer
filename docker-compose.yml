@@ -5,6 +5,8 @@ services:
       dockerfile: docker/Dockerfile
     stdin_open: true
     tty: true
+    ports:
+      - "5001:5000"
     # Set the API key from the .env file
     env_file:
       - .env

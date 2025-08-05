@@ -39,6 +39,7 @@ import traceback
 
 from pathlib import Path
 from typing import List, MutableMapping, Optional, Union
+from uuid import uuid4
 
 from langchain.schema import HumanMessage, SystemMessage
 from termcolor import colored
@@ -234,7 +235,8 @@ def execute_entrypoint(
     prompt: Prompt = None,
     preprompts_holder: PrepromptsHolder = None,
     memory: BaseMemory = None,
-    parent_span_id: str = None,  # <-- new argument
+    parent_span_id: str = None,
+    web_ui: Optional[bool] = False,
 ) -> FilesDict:
     """
     Executes the entrypoint of the codebase.
@@ -257,9 +259,6 @@ def execute_entrypoint(
     """
     observability = None
     validation_span_id = None
-    user_prompt_span_id = None
-    upload_span_id = None
-    execution_span_id = None
 
     if OBSERVABILITY_AVAILABLE:
         try:
@@ -270,8 +269,6 @@ def execute_entrypoint(
     try:
         # Start entrypoint validation span as child if parent_span_id is provided
         if observability and observability.is_enabled():
-            from uuid import uuid4
-
             validation_span_id = str(uuid4())
             start_span_kwargs = dict(
                 span_id=validation_span_id,
@@ -367,25 +364,8 @@ def execute_entrypoint(
                 result={"entrypoint_found": True, "command_length": len(command)},
             )
 
-        # Start user prompt span
-        if observability and observability.is_enabled():
-            user_prompt_span_id = str(uuid4())
-            observability.start_span(
-                span_id=user_prompt_span_id,
-                name="User Confirmation Prompt",
-                tags={
-                    "operation": "user_interaction",
-                    "prompt_type": "execution_confirmation",
-                },
-                metadata={
-                    "command_preview": command[:200] + "..."
-                    if len(command) > 200
-                    else command
-                },
-            )
-
         # Log prompt display as an event
-        if observability and observability.is_enabled() and user_prompt_span_id:
+        if observability and observability.is_enabled():
             prompt_display_event_id = str(uuid4())
             observability.log_event(
                 event_id=prompt_display_event_id,
@@ -395,7 +375,6 @@ def execute_entrypoint(
                     "prompt_text": "Do you want to execute this code? (Y/n)",
                     "command_displayed": command,
                     "display_time": datetime.datetime.utcnow().isoformat() + "+00:00",
-                    "span_id": user_prompt_span_id,
                 },
                 tags={
                     "operation": "user_prompt_display",
@@ -413,53 +392,43 @@ def execute_entrypoint(
         print()
         print(command)
         print()
-        user_response = input("").lower()
-        user_confirmed = user_response in ["", "y", "yes"]
-
-        # End user prompt span
-        if observability and observability.is_enabled() and user_prompt_span_id:
-            observability.end_span(
-                span_id=user_prompt_span_id,
-                result={
-                    "user_confirmed": user_confirmed,
-                    "user_response": user_response,
-                },
-            )
-
-        if not user_confirmed:
-            print("Ok, not executing the code.")
-            return files_dict
-
-        print("Executing the code...")
-        print()
-        print(
-            colored(
-                "Note: If it does not work as expected, consider running the code"
-                + " in another way than above.",
-                "green",
-            )
-        )
-        print()
-        print("You can press ctrl+c *once* to stop the execution.")
-        print()
-
-        uploaded_result = execution_env.upload(files_dict)
 
         if observability and observability.is_enabled():
             trace_output_content = f"{command}\nDo you want to execute this code? (Y/n)"
             observability.set_trace_output(trace_output_content)
-            if validation_span_id:
-                observability.end_span(span_id=validation_span_id)
-            if user_prompt_span_id:
-                observability.end_span(span_id=user_prompt_span_id)
-            if upload_span_id:
-                observability.end_span(span_id=upload_span_id)
             observability.end_trace()
 
+    finally:
+        if web_ui:
+            # For web UI, return files_dict and let the web UI handle execution confirmation
+            # The web UI will detect the "Do you want to execute this code?" prompt
+            # and set up the pending execution state
+            return files_dict
+        else:
+            return execute_entrypoint_next(execution_env, files_dict)
+
+
+def execute_entrypoint_next(
+    execution_env: BaseExecutionEnv,
+    files_dict: FilesDict = None,
+    user_response: str = None,
+) -> FilesDict:
+    """
+    Executes the entrypoint of the codebase.
+    """
+
+    observability = None
+    execution_span_id = None
+
+    if OBSERVABILITY_AVAILABLE:
+        try:
+            observability = get_observability()
+        except Exception:
+            pass  # Continue without observability
+
+    try:
         # Start a new trace for command execution and user feedback
         if observability and observability.is_enabled():
-            from uuid import uuid4
-
             new_trace_id = str(uuid4())
             observability.start_trace(
                 trace_id=new_trace_id,
@@ -474,6 +443,42 @@ def execute_entrypoint(
                 },
             )
             observability.set_trace_input(f"{user_response}")
+            # Use provided user_response if available, otherwise prompt for input
+        if user_response is None:
+            user_response = input("").lower()
+        else:
+            user_response = user_response.lower()
+        user_confirmed = user_response in ["", "y", "yes"]
+
+        if not user_confirmed:
+            print("Ok, not executing the code.")
+            return files_dict or FilesDict()
+
+        print("Executing the code...")
+        print()
+        print(
+            colored(
+                "Note: If it does not work as expected, consider running the code"
+                + " in another way than above.",
+                "green",
+            )
+        )
+        print()
+        print("You can press ctrl+c *once* to stop the execution.")
+        print()
+
+        try:
+            uploaded_result = execution_env.upload(files_dict)
+        except Exception as upload_error:
+            if observability and observability.is_enabled():
+                observability.log_event(
+                    event_id=str(uuid4()),
+                    event_type="upload_error",
+                    data=None,
+                    metadata={"error": str(upload_error)},
+                    tags={"operation": "file_upload", "error": "true"},
+                )
+            raise
 
         # Start command execution span
         if observability and observability.is_enabled():
@@ -507,7 +512,31 @@ def execute_entrypoint(
                 },
             )
 
-        uploaded_result.run(f"bash {ENTRYPOINT_FILE}")
+        try:
+            uploaded_result.run(f"bash {ENTRYPOINT_FILE}")
+        except Exception as run_error:
+            if observability and observability.is_enabled() and tool_call_id:
+                observability.log_tool_call(
+                    tool_call_id=tool_call_id,
+                    name="Code Execution",
+                    description=f"Execute the entrypoint file ({ENTRYPOINT_FILE}) to run the generated code",
+                    args={
+                        "entrypoint_file": ENTRYPOINT_FILE,
+                        "command": f"bash {ENTRYPOINT_FILE}",
+                        "files_count": len(files_dict),
+                    },
+                    result={
+                        "execution_completed": False,
+                        "error": str(run_error),
+                    },
+                    tags={
+                        "operation": "code_execution",
+                        "mode": "execute_entrypoint",
+                        "success": "false",
+                    },
+                )
+                tool_call_id = None
+            raise
 
         # Update tool call with result
         if observability and observability.is_enabled() and tool_call_id:
@@ -537,17 +566,11 @@ def execute_entrypoint(
                 span_id=execution_span_id, result={"execution_completed": True}
             )
 
-        return files_dict
+        return files_dict or FilesDict()
 
     except Exception as e:
         # End any active spans with error
         if observability and observability.is_enabled():
-            if validation_span_id:
-                observability.end_span(span_id=validation_span_id, error=e)
-            if user_prompt_span_id:
-                observability.end_span(span_id=user_prompt_span_id, error=e)
-            if upload_span_id:
-                observability.end_span(span_id=upload_span_id, error=e)
             if execution_span_id:
                 observability.end_span(span_id=execution_span_id, error=e)
         raise

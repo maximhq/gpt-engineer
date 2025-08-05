@@ -80,12 +80,17 @@ class MultiTurnEngine:
     the appropriate mode for each interaction.
     """
 
-    def __init__(self, ai: AI, project_path: str, preprompts_holder: PrepromptsHolder):
+    def __init__(
+        self,
+        ai: AI,
+        project_path: str,
+        preprompts_holder: PrepromptsHolder,
+        web_ui: Optional[bool] = False,
+    ):
         """
         Initialize the multi-turn engine.
 
         Parameters
-        ----------
         ai : AI
             The AI instance to use for conversations.
         project_path : str
@@ -96,6 +101,7 @@ class MultiTurnEngine:
         self.ai = ai
         self.project_path = project_path
         self.preprompts_holder = preprompts_holder
+        self.web_ui = web_ui
         self.memory = DiskMemory(memory_path(project_path))
         self.execution_env = DiskExecutionEnv()
         self.files = FileStore(project_path)
@@ -433,7 +439,7 @@ Examples:
                                     filename=filename,
                                     content=content,
                                     mime_type=mime_type,
-                                    target="trace",
+                                    target="auto",  # Let the system choose the best target
                                 )
                                 print(f"📎 Attached {filename} to trace")
                             except Exception as e:
@@ -536,7 +542,7 @@ Examples:
                                     filename=filename,
                                     content=content,
                                     mime_type=mime_type,
-                                    target="trace",
+                                    target="auto",  # Let the system choose the best target
                                 )
                                 print(f"📎 Attached {filename} to trace")
                             except Exception as e:
@@ -696,7 +702,7 @@ Examples:
                 print(f"📦 Final merge: {len(merged_files)} total files")
 
                 # Execute the entrypoint (code processing)
-                merged_files = execute_entrypoint(
+                result = execute_entrypoint(
                     self.ai,
                     self.execution_env,
                     merged_files,
@@ -704,7 +710,11 @@ Examples:
                     preprompts_holder=self.preprompts_holder,
                     memory=self.memory,
                     parent_span_id=execution_span_id,  # ← Pass parent_span_id
+                    web_ui=self.web_ui,
                 )
+
+                # When web_ui=False, execute_entrypoint returns just files_dict
+                merged_files = result
 
                 # End code processing span
                 if observability and observability.is_enabled() and execution_span_id:
@@ -785,7 +795,7 @@ Examples:
                                         filename=filename,
                                         content=content,
                                         mime_type=mime_type,
-                                        target="trace",
+                                        target="auto",  # Let the system choose the best target
                                     )
                                     print(f"📎 Attached {filename} to trace")
                                 except Exception as e:
@@ -796,7 +806,7 @@ Examples:
                         print(f"⚠️  Failed to attach files to trace: {e}")
 
                 # Execute the entrypoint (code processing)
-                merged_files = execute_entrypoint(
+                result = execute_entrypoint(
                     self.ai,
                     self.execution_env,
                     merged_files,
@@ -804,7 +814,12 @@ Examples:
                     preprompts_holder=self.preprompts_holder,
                     memory=self.memory,
                     parent_span_id=generate_span_id,
+                    web_ui=self.web_ui,
                 )
+
+                # execute_entrypoint always returns files_dict
+                merged_files = result
+
                 print("✅ Code execution completed")
 
             print(f"💾 Writing {len(merged_files)} files to disk...")

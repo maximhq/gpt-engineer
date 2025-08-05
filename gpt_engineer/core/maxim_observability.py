@@ -462,6 +462,20 @@ class MaximObservability:
                 )
                 return None
 
+            # Validate span stack before adding
+            if not self._validate_span_stack():
+                logger.warning(
+                    "[MaximObservability] Span stack validation failed, resetting"
+                )
+                self._reset_span_stack()
+
+            # Check for duplicate span_id
+            if span_id in self.span_id_stack:
+                logger.warning(
+                    f"[MaximObservability] Span ID {span_id} already exists, skipping"
+                )
+                return None
+
             # Create span config dict with proper structure
             span_config = {"id": span_id, "name": name, "tags": tags or {}}
 
@@ -1173,6 +1187,13 @@ class MaximObservability:
                 )
                 return
 
+            # Check for duplicate events
+            if self._is_duplicate_event(event_id, event_type):
+                logger.debug(
+                    f"[MaximObservability] Skipping duplicate event: {event_id}"
+                )
+                return
+
             # Auto-choose target: prefer span if available, otherwise trace
             if target == "auto":
                 if self.span_stack:
@@ -1329,7 +1350,7 @@ class MaximObservability:
         filename: str,
         content: Union[str, bytes],
         mime_type: Optional[str] = None,
-        target: str = "trace",
+        target: str = "auto",
         target_id: Optional[str] = None,
     ) -> Optional[str]:
         """
@@ -1339,7 +1360,7 @@ class MaximObservability:
             filename: Name of the file
             content: File content as string or bytes
             mime_type: MIME type of the file (auto-detected if None)
-            target: Target to attach to ("trace" or "span")
+            target: Target to attach to ("trace", "span", or "auto")
             target_id: Specific target ID (uses current if None)
 
         Returns:
@@ -1370,12 +1391,22 @@ class MaximObservability:
                     # Default MIME types based on extension
                     if filename.endswith(".py"):
                         mime_type = "text/x-python"
-                    elif filename.endswith(".sh"):
-                        mime_type = "application/x-sh"
-                    elif filename.endswith(".txt"):
-                        mime_type = "text/plain"
+                    elif filename.endswith(".js"):
+                        mime_type = "text/javascript"
+                    elif filename.endswith(".html"):
+                        mime_type = "text/html"
+                    elif filename.endswith(".css"):
+                        mime_type = "text/css"
                     elif filename.endswith(".json"):
                         mime_type = "application/json"
+                    elif filename.endswith(".md"):
+                        mime_type = "text/markdown"
+                    elif filename.endswith(".txt"):
+                        mime_type = "text/plain"
+                    elif filename.endswith(".toml"):
+                        mime_type = "text/x-toml"
+                    elif filename.endswith(".yml") or filename.endswith(".yaml"):
+                        mime_type = "text/x-yaml"
                     else:
                         mime_type = "text/plain"
 
@@ -1395,6 +1426,16 @@ class MaximObservability:
                     f"[MaximObservability] Failed to create FileDataAttachment: {e}"
                 )
                 return None
+
+            # Clarify attachment targets
+            if target == "auto":
+                target = (
+                    "trace"
+                    if self.current_trace
+                    else "span"
+                    if self.span_stack
+                    else None
+                )
 
             # Attach to the appropriate target
             if target == "trace" and self.current_trace:
@@ -1648,6 +1689,10 @@ class MaximObservability:
             logger.warning(
                 "[MaximObservability] validate_session_state: No current session object"
             )
+            # Try to recover session state
+            if self.recover_session_state():
+                logger.info("[MaximObservability] Session state recovered successfully")
+                return True
             return False
 
         # Try to access session properties to verify it's still valid
@@ -1670,7 +1715,93 @@ class MaximObservability:
             logger.warning(
                 f"[MaximObservability] validate_session_state: Session validation failed: {e}"
             )
+            # Try to recover session state
+            if self.recover_session_state():
+                logger.info(
+                    "[MaximObservability] Session state recovered after validation failure"
+                )
+                return True
             return False
+
+    def _validate_span_stack(self) -> bool:
+        """
+        Validates the span stack to ensure no duplicate span IDs and correct order.
+        Returns True if valid, False otherwise.
+        """
+        if not self.span_id_stack:
+            return True
+
+        # Create a set of unique span IDs for quick lookup
+        unique_span_ids = set(self.span_id_stack)
+
+        # Check if any span ID is duplicated
+        if len(unique_span_ids) != len(self.span_id_stack):
+            logger.warning(
+                "[MaximObservability] Duplicate span IDs detected in stack. Resetting stack."
+            )
+            return False
+
+        # Check if the stack is in a valid order (child spans before parents)
+        # This is a simplified check. A more robust solution would involve
+        # tracking parent-child relationships or ensuring no cycles.
+        # For now, we'll just check if the stack is not empty and the IDs are unique.
+        return True
+
+    def _reset_span_stack(self) -> None:
+        """
+        Resets the span stack and span_id_stack to ensure no duplicate spans.
+        """
+        logger.warning(
+            "[MaximObservability] Span stack validation failed. Resetting span stack."
+        )
+        self.span_stack = []
+        self.span_id_stack = []
+
+    def recover_session_state(self) -> bool:
+        """
+        Attempt to recover from inconsistent session state.
+        Returns True if recovery was successful, False otherwise.
+        """
+        try:
+            if not self.current_session and self.current_session_id:
+                # Attempt to recreate session
+                session_config = {
+                    "id": self.current_session_id,
+                    "name": f"Session-{self.current_session_id[:8]}",
+                    "tags": {},
+                }
+                self.current_session = self.logger.session(session_config)
+                logger.info(
+                    f"[MaximObservability] Successfully recovered session: {self.current_session_id}"
+                )
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"[MaximObservability] Session recovery failed: {e}")
+            return False
+
+    def _is_duplicate_event(self, event_id: str, event_type: str) -> bool:
+        """
+        Check if an event is a duplicate based on event_id and event_type.
+        Returns True if duplicate, False otherwise.
+        """
+        # Simple duplicate detection - in a more sophisticated implementation,
+        # you might want to track events in memory or use a more robust deduplication strategy
+        # For now, we'll use a simple approach based on event_id
+        if not hasattr(self, "_recent_events"):
+            self._recent_events = set()
+
+        # Check if event_id is in recent events
+        if event_id in self._recent_events:
+            return True
+
+        # Add to recent events (keep only last 100 events to prevent memory leaks)
+        self._recent_events.add(event_id)
+        if len(self._recent_events) > 100:
+            # Remove oldest events (simple FIFO)
+            self._recent_events = set(list(self._recent_events)[-50:])
+
+        return False
 
 
 # Global instance

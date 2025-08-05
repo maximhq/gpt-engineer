@@ -38,8 +38,8 @@ Examples:
     parser.add_argument(
         "--port",
         type=int,
-        default=5000,
-        help="Port to bind the server to (default: 5000)",
+        default=5001,
+        help="Port to bind the server to (default: 5001)",
     )
 
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
