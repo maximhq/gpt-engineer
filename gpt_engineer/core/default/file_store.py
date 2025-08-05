@@ -54,7 +54,7 @@ class FileStore:
         self.working_dir.mkdir(parents=True, exist_ok=True)
         self.id = self.working_dir.name.split("-")[-1]
 
-    def push(self, files: FilesDict):
+    def push(self, files: FilesDict, parent_span_id: str = None):
         # Only log if not in execution environment
         should_log = not is_execution_env_path(self.working_dir)
 
@@ -70,24 +70,27 @@ class FileStore:
 
                     # Start file write span
                     file_write_span_id = str(uuid4())
-                    observability.start_span(
-                        span_id=file_write_span_id,
-                        name="File Write",
-                        tags={
+                    start_span_kwargs = {
+                        "span_id": file_write_span_id,
+                        "name": "File Write",
+                        "tags": {
                             "operation": "file_write",
                             "file_count": str(len(files)),
                             "total_size": str(
                                 sum(len(content) for content in files.values())
                             ),
                         },
-                        metadata={
+                        "metadata": {
                             "file_names": list(files.keys()),
                             "file_types": list(
                                 set(Path(name).suffix for name in files.keys())
                             ),
                             "working_directory": str(self.working_dir),
                         },
-                    )
+                    }
+                    if parent_span_id:
+                        start_span_kwargs["parent_span_id"] = parent_span_id
+                    observability.start_span(**start_span_kwargs)
 
                     # Log the bulk file write operation as an event within the span
                     observability.log_event(

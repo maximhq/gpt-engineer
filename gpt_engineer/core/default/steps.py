@@ -40,6 +40,7 @@ import traceback
 from pathlib import Path
 from typing import List, MutableMapping, Optional, Union
 from uuid import uuid4
+from subprocess import TimeoutExpired
 
 from langchain.schema import HumanMessage, SystemMessage
 from termcolor import colored
@@ -412,6 +413,7 @@ def execute_entrypoint_next(
     execution_env: BaseExecutionEnv,
     files_dict: FilesDict = None,
     user_response: str = None,
+    timeout: Optional[int] = 30,
 ) -> FilesDict:
     """
     Executes the entrypoint of the codebase.
@@ -468,7 +470,7 @@ def execute_entrypoint_next(
         print()
 
         try:
-            uploaded_result = execution_env.upload(files_dict)
+            uploaded_result = execution_env.upload(files_dict, parent_span_id=execution_span_id)
         except Exception as upload_error:
             if observability and observability.is_enabled():
                 observability.log_event(
@@ -513,7 +515,33 @@ def execute_entrypoint_next(
             )
 
         try:
-            uploaded_result.run(f"bash {ENTRYPOINT_FILE}")
+            uploaded_result.run(f"bash {ENTRYPOINT_FILE}", timeout=timeout)
+        except TimeoutExpired as timeout_error:
+            if observability and observability.is_enabled() and tool_call_id:
+                observability.log_tool_call(
+                    tool_call_id=tool_call_id,
+                    name="Code Execution",
+                    description=f"Execute the entrypoint file ({ENTRYPOINT_FILE}) to run the generated code",
+                    args={
+                        "entrypoint_file": ENTRYPOINT_FILE,
+                        "command": f"bash {ENTRYPOINT_FILE}",
+                        "files_count": len(files_dict),
+                        "timeout": timeout,
+                    },
+                    result={
+                        "execution_completed": False,
+                        "error": str(timeout_error),
+                        "timed_out": True,
+                    },
+                    tags={
+                        "operation": "code_execution",
+                        "mode": "execute_entrypoint",
+                        "success": "false",
+                        "timeout": "true",
+                    },
+                )
+                tool_call_id = None
+            raise
         except Exception as run_error:
             if observability and observability.is_enabled() and tool_call_id:
                 observability.log_tool_call(

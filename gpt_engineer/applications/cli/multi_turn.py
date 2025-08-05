@@ -400,6 +400,7 @@ Examples:
                 prompt=prompt,
                 preprompts_holder=self.preprompts_holder,
                 memory=self.memory,
+                execution_timeout=30,  # 30 second timeout for CLI execution
             )
 
             if OBSERVABILITY_AVAILABLE and files_dict:
@@ -447,8 +448,8 @@ Examples:
                 except Exception as e:
                     print(f"⚠️  Failed to attach files to trace: {e}")
 
-            # Apply the files
-            self.files.push(files_dict)
+            # Apply the files with parent span context for proper observability
+            self.files.push(files_dict, parent_span_id=debug_span_id)
             self.current_files = files_dict
 
             # End debug mode span
@@ -551,8 +552,8 @@ Examples:
                     print(f"⚠️  Failed to attach files to trace: {e}")
 
             if files_dict is not None:
-                # Apply the files
-                self.files.push(files_dict)
+                # Apply the files with parent span context for proper observability
+                self.files.push(files_dict, parent_span_id=improve_span_id)
                 self.current_files = files_dict
 
             # End improve mode span
@@ -823,8 +824,8 @@ Examples:
                 print("✅ Code execution completed")
 
             print(f"💾 Writing {len(merged_files)} files to disk...")
-            # Apply the files
-            self.files.push(merged_files)
+            # Apply the files with parent span context for proper observability
+            self.files.push(merged_files, parent_span_id=generate_span_id)
             self.current_files = merged_files
             print("✅ Files written to disk successfully")
 
@@ -915,8 +916,8 @@ Examples:
                     self.preprompts_holder,
                 )
 
-                # Apply the files
-                self.files.push(files_dict)
+                # Apply the files with parent span context for proper observability
+                self.files.push(files_dict, parent_span_id=misc_span_id)
                 self.current_files = files_dict
 
                 # End misc mode span

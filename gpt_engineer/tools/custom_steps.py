@@ -1,6 +1,7 @@
+import subprocess
 from platform import platform
 from sys import version_info
-from typing import List, Union
+from typing import List, Union, Optional
 
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 
@@ -54,6 +55,7 @@ def self_heal(
     memory: BaseMemory = None,
     diff_timeout=3,
     parent_span_id: str = None,
+    execution_timeout: Optional[int] = 30,
 ) -> FilesDict:
     """
     Attempts to execute the code from the entrypoint and if it fails, sends the error output back to the AI with instructions to fix.
@@ -187,7 +189,7 @@ def self_heal(
             print(f"Attempt {attempts}/{MAX_SELF_HEAL_ATTEMPTS}: Executing code...")
 
             # Start the process
-            execution_env.upload(files_dict)
+            execution_env.upload(files_dict, parent_span_id=execution_span_id)
             p = execution_env.popen(files_dict[ENTRYPOINT_FILE])
 
             # Log tool call for code execution
@@ -204,6 +206,7 @@ def self_heal(
                         "max_attempts": MAX_SELF_HEAL_ATTEMPTS,
                         "files_count": len(files_dict),
                         "entrypoint_content_length": len(files_dict[ENTRYPOINT_FILE]),
+                        "execution_timeout": execution_timeout,
                     },
                     tags={
                         "operation": "code_execution",
@@ -213,7 +216,13 @@ def self_heal(
                 )
 
             # Wait for the process to complete and get output
-            stdout_full, stderr_full = p.communicate()
+            try:
+                stdout_full, stderr_full = p.communicate(timeout=execution_timeout)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                stdout_full, stderr_full = p.communicate()
+                timed_out = True
+                print(f"Execution timed out after {execution_timeout} seconds")
 
             # Update tool call with result
             if observability and observability.is_enabled() and tool_call_id:
@@ -228,6 +237,7 @@ def self_heal(
                         "max_attempts": MAX_SELF_HEAL_ATTEMPTS,
                         "files_count": len(files_dict),
                         "entrypoint_content_length": len(files_dict[ENTRYPOINT_FILE]),
+                        "execution_timeout": execution_timeout,
                     },
                     result={
                         "success": success,
@@ -240,6 +250,7 @@ def self_heal(
                         "stderr_preview": stderr_full.decode("utf-8")[:500]
                         if stderr_full
                         else "",
+                        "timed_out": timed_out,
                     },
                     tags={
                         "operation": "code_execution",

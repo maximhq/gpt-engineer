@@ -60,8 +60,8 @@ class DiskExecutionEnv(BaseExecutionEnv):
     def __init__(self, path: Union[str, Path, None] = None):
         self.files = FileStore(path)
 
-    def upload(self, files: FilesDict) -> "DiskExecutionEnv":
-        self.files.push(files)
+    def upload(self, files: FilesDict, parent_span_id: str = None) -> "DiskExecutionEnv":
+        self.files.push(files, parent_span_id=parent_span_id)
         return self
 
     def download(self) -> FilesDict:
@@ -81,34 +81,34 @@ class DiskExecutionEnv(BaseExecutionEnv):
         start = time.time()
 
         # Log tool call if observability is available
-        tool_call_id = None
-        if OBSERVABILITY_AVAILABLE:
-            try:
-                observability = get_observability()
-                if observability.is_enabled():
-                    from uuid import uuid4
+        # tool_call_id = None
+        # if OBSERVABILITY_AVAILABLE:
+        #     try:
+        #         observability = get_observability()
+        #         if observability.is_enabled():
+        #             from uuid import uuid4
 
-                    tool_call_id = str(uuid4())
-                    observability.log_tool_call(
-                        tool_call_id=tool_call_id,
-                        name="Execute Shell Command",
-                        description=f"Execute shell command: {command}",
-                        args={
-                            "command": command,
-                            "timeout": timeout,
-                            "working_dir": str(self.files.working_dir),
-                        },
-                        tags={
-                            "tool_type": "shell_execution",
-                            "command_type": command.split()[0]
-                            if command.split()
-                            else "unknown",
-                            "has_timeout": str(timeout is not None),
-                        },
-                    )
-            except Exception:
-                # Continue without observability if it fails
-                pass
+        #             tool_call_id = str(uuid4())
+        #             observability.log_tool_call(
+        #                 tool_call_id=tool_call_id,
+        #                 name="Execute Shell Command",
+        #                 description=f"Execute shell command: {command}",
+        #                 args={
+        #                     "command": command,
+        #                     "timeout": timeout,
+        #                     "working_dir": str(self.files.working_dir),
+        #                 },
+        #                 tags={
+        #                     "tool_type": "shell_execution",
+        #                     "command_type": command.split()[0]
+        #                     if command.split()
+        #                     else "unknown",
+        #                     "has_timeout": str(timeout is not None),
+        #                 },
+        #             )
+        #     except Exception:
+        #         # Continue without observability if it fails
+        #         pass
 
         print("\n--- Start of run ---")
         print("$", command)
@@ -134,7 +134,7 @@ class DiskExecutionEnv(BaseExecutionEnv):
                 except subprocess.TimeoutExpired:
                     p.kill()
                     stdout_full, stderr_full = p.communicate()
-                    execution_error = TimeoutError("Command execution timed out")
+                    execution_error = subprocess.TimeoutExpired(command, timeout)
                     raise execution_error
             else:
                 stdout_full, stderr_full = p.communicate()
@@ -160,67 +160,67 @@ class DiskExecutionEnv(BaseExecutionEnv):
             return_code = -1
 
         # Update the single tool call with result or error
-        if OBSERVABILITY_AVAILABLE and tool_call_id:
-            try:
-                observability = get_observability()
-                if observability.is_enabled():
-                    execution_time = time.time() - start
+        # if OBSERVABILITY_AVAILABLE and tool_call_id:
+        #     try:
+        #         observability = get_observability()
+        #         if observability.is_enabled():
+        #             execution_time = time.time() - start
 
-                    if execution_error:
-                        observability.log_tool_call(
-                            tool_call_id=tool_call_id,
-                            name="Command Execution",
-                            description=f"Execute shell command: {command}",
-                            args={
-                                "command": command,
-                                "timeout": timeout,
-                                "working_dir": str(self.files.working_dir),
-                                "execution_time": execution_time,
-                            },
-                            error=execution_error,
-                            tags={
-                                "tool_type": "shell_execution",
-                                "command_type": command.split()[0]
-                                if command.split()
-                                else "unknown",
-                                "has_timeout": str(timeout is not None),
-                                "error_type": type(execution_error).__name__,
-                            },
-                        )
-                    else:
-                        result_summary = {
-                            "return_code": return_code,
-                            "execution_time": execution_time,
-                            "stdout_length": len(stdout_full),
-                            "stderr_length": len(stderr_full),
-                            "stdout": stdout_full,
-                            "stderr": stderr_full,
-                            "success": return_code == 0,
-                        }
+        #             if execution_error:
+        #                 observability.log_tool_call(
+        #                     tool_call_id=tool_call_id,
+        #                     name="Command Execution",
+        #                     description=f"Execute shell command: {command}",
+        #                     args={
+        #                         "command": command,
+        #                         "timeout": timeout,
+        #                         "working_dir": str(self.files.working_dir),
+        #                         "execution_time": execution_time,
+        #                     },
+        #                     error=execution_error,
+        #                     tags={
+        #                         "tool_type": "shell_execution",
+        #                         "command_type": command.split()[0]
+        #                         if command.split()
+        #                         else "unknown",
+        #                         "has_timeout": str(timeout is not None),
+        #                         "error_type": type(execution_error).__name__,
+        #                     },
+        #                 )
+        #             else:
+        #                 result_summary = {
+        #                     "return_code": return_code,
+        #                     "execution_time": execution_time,
+        #                     "stdout_length": len(stdout_full),
+        #                     "stderr_length": len(stderr_full),
+        #                     "stdout": stdout_full,
+        #                     "stderr": stderr_full,
+        #                     "success": return_code == 0,
+        #                 }
 
-                        observability.log_tool_call(
-                            tool_call_id=tool_call_id,
-                            name="Command Execution",
-                            description=f"Execute shell command: {command}",
-                            args={
-                                "command": command,
-                                "timeout": timeout,
-                                "working_dir": str(self.files.working_dir),
-                                "execution_time": execution_time,
-                            },
-                            result=result_summary,
-                            tags={
-                                "tool_type": "shell_execution",
-                                "command_type": command.split()[0]
-                                if command.split()
-                                else "unknown",
-                                "has_timeout": str(timeout is not None),
-                                "return_code": str(return_code),
-                                "success": str(return_code == 0),
-                            },
-                        )
-            except Exception:
-                # Continue without observability if it fails
-                pass
+        #                 observability.log_tool_call(
+        #                     tool_call_id=tool_call_id,
+        #                     name="Command Execution",
+        #                     description=f"Execute shell command: {command}",
+        #                     args={
+        #                         "command": command,
+        #                         "timeout": timeout,
+        #                         "working_dir": str(self.files.working_dir),
+        #                         "execution_time": execution_time,
+        #                     },
+        #                     result=result_summary,
+        #                     tags={
+        #                         "tool_type": "shell_execution",
+        #                         "command_type": command.split()[0]
+        #                         if command.split()
+        #                         else "unknown",
+        #                         "has_timeout": str(timeout is not None),
+        #                         "return_code": str(return_code),
+        #                         "success": str(return_code == 0),
+        #                     },
+        #                 )
+            # except Exception:
+            #     # Continue without observability if it fails
+            #     pass
 
         return stdout_full, stderr_full, return_code

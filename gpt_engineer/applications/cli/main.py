@@ -869,7 +869,7 @@ def execute_gpt_engineer(config: CliConfig) -> None:
 
             try:
                 # File operations happen within finalization span
-                files.push(files_dict)
+                files.push(files_dict, parent_span_id=finalization_span_id)
 
                 # User feedback collection happens within finalization span
                 if not config.improve_mode:

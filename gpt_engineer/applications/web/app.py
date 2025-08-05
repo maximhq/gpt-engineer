@@ -816,11 +816,12 @@ def execute_code():
                 # Import the execute_entrypoint_next function
                 from gpt_engineer.core.default.steps import execute_entrypoint_next
 
-                # Execute using the execute_entrypoint_next function with user response
+                # Execute using the execute_entrypoint_next function with user response and timeout
                 execute_entrypoint_next(
                     execution_env=active_session.engine.engine.execution_env,
                     files_dict=active_session.engine.engine.current_files,
                     user_response=user_response,
+                    timeout=30,  # 30 second timeout for web UI execution
                 )
 
                 # Clear pending execution

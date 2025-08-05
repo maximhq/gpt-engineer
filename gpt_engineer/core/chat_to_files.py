@@ -23,6 +23,7 @@ allowing for the dynamic application of changes to code bases and the efficient 
 
 import logging
 import re
+from subprocess import TimeoutExpired
 
 from typing import Dict, Tuple
 
@@ -149,7 +150,7 @@ def parse_diffs(diff_string: str, diff_timeout=3) -> dict:
                     print(
                         f"\nMultiple diffs found for {filename}. Only the first one is kept."
                     )
-    except TimeoutError:
+    except TimeoutExpired:
         print("gpt-engineer timed out while parsing git diff")
 
     if not diffs:
