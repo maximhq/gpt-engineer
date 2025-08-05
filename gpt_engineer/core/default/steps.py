@@ -515,7 +515,9 @@ def execute_entrypoint_next(
             )
 
         try:
-            uploaded_result.run(f"bash {ENTRYPOINT_FILE}", timeout=timeout)
+            result = uploaded_result.run(f"bash {ENTRYPOINT_FILE}", timeout=timeout)
+            if observability and observability.is_enabled():
+                observability.set_trace_output(str(result))
         except TimeoutExpired as timeout_error:
             if observability and observability.is_enabled() and tool_call_id:
                 observability.log_tool_call(

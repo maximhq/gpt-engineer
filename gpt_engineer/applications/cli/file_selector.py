@@ -436,73 +436,73 @@ class FileSelector:
         result = sorted(all_files, key=lambda x: Path(x).as_posix())
 
         # Log file selection query if observability is available
-        if OBSERVABILITY_AVAILABLE:
-            try:
-                observability = get_observability()
-                if observability.is_enabled():
-                    from uuid import uuid4
+        # if OBSERVABILITY_AVAILABLE:
+        #     try:
+        #         observability = get_observability()
+        #         if observability.is_enabled():
+        #             from uuid import uuid4
 
-                    # Create a comprehensive query description
-                    query_parts = []
-                    if git_filtered:
-                        query_parts.append("gitignore_filtered")
+        #             # Create a comprehensive query description
+        #             query_parts = []
+        #             if git_filtered:
+        #                 query_parts.append("gitignore_filtered")
 
-                    query_parts.append("sorted_by_path")
-                    query_description = "file_selection:" + "+".join(query_parts)
+        #             query_parts.append("sorted_by_path")
+        #             query_description = "file_selection:" + "+".join(query_parts)
 
-                    # Determine file type distribution
-                    file_types = {}
-                    for file_path in result:
-                        ext = Path(file_path).suffix or "no_extension"
-                        file_types[ext] = file_types.get(ext, 0) + 1
+        #             # Determine file type distribution
+        #             file_types = {}
+        #             for file_path in result:
+        #                 ext = Path(file_path).suffix or "no_extension"
+        #                 file_types[ext] = file_types.get(ext, 0) + 1
 
-                    observability.log_retrieval(
-                        retrieval_id=str(uuid4()),
-                        name="Project Files Selection",
-                        source="file_selector",
-                        query=query_description,
-                        result=f"Selected {len(result)} files from {project_path}",
-                        search_context={
-                            "operation": "file_selection",
-                            "base_path": str(project_path),
-                            "git_filtering_applied": git_filtered,
-                            "is_git_repository": is_git_repo(project_path),
-                            "sorting_strategy": "alphabetical_by_path",
-                            "exclusion_patterns": ["hidden_files"]
-                            if not git_filtered
-                            else [],
-                            "selection_criteria": {
-                                "recursive": True,
-                                "files_only": True,
-                                "follow_symlinks": False,
-                            },
-                        },
-                        tags={
-                            "operation": "file_selection",
-                            "project_type": "git_repo" if git_filtered else "directory",
-                            "file_count": str(len(result)),
-                            "git_filtered": str(git_filtered),
-                            "source_path": str(project_path),
-                        },
-                        metadata={
-                            "project_path": str(project_path),
-                            "total_files_selected": len(result),
-                            "file_type_distribution": file_types,
-                            "largest_file_type": max(
-                                file_types.items(), key=lambda x: x[1]
-                            )[0]
-                            if file_types
-                            else "none",
-                            "selection_timestamp": str(datetime.now()),
-                            "filtering_stages": [
-                                "directory_traversal",
-                                "gitignore_filter" if git_filtered else None,
-                                "path_sorting",
-                            ],
-                        },
-                    )
-            except Exception:
-                pass  # Don't fail file selection if observability fails
+        #             observability.log_retrieval(
+        #                 retrieval_id=str(uuid4()),
+        #                 name="Project Files Selection",
+        #                 source="file_selector",
+        #                 query=query_description,
+        #                 result=f"Selected {len(result)} files from {project_path}",
+        #                 search_context={
+        #                     "operation": "file_selection",
+        #                     "base_path": str(project_path),
+        #                     "git_filtering_applied": git_filtered,
+        #                     "is_git_repository": is_git_repo(project_path),
+        #                     "sorting_strategy": "alphabetical_by_path",
+        #                     "exclusion_patterns": ["hidden_files"]
+        #                     if not git_filtered
+        #                     else [],
+        #                     "selection_criteria": {
+        #                         "recursive": True,
+        #                         "files_only": True,
+        #                         "follow_symlinks": False,
+        #                     },
+        #                 },
+        #                 tags={
+        #                     "operation": "file_selection",
+        #                     "project_type": "git_repo" if git_filtered else "directory",
+        #                     "file_count": str(len(result)),
+        #                     "git_filtered": str(git_filtered),
+        #                     "source_path": str(project_path),
+        #                 },
+        #                 metadata={
+        #                     "project_path": str(project_path),
+        #                     "total_files_selected": len(result),
+        #                     "file_type_distribution": file_types,
+        #                     "largest_file_type": max(
+        #                         file_types.items(), key=lambda x: x[1]
+        #                     )[0]
+        #                     if file_types
+        #                     else "none",
+        #                     "selection_timestamp": str(datetime.now()),
+        #                     "filtering_stages": [
+        #                         "directory_traversal",
+        #                         "gitignore_filter" if git_filtered else None,
+        #                         "path_sorting",
+        #                     ],
+        #                 },
+        #             )
+        #     except Exception:
+        #         pass  # Don't fail file selection if observability fails
 
         return result
 

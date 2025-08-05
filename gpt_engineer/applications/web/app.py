@@ -24,13 +24,15 @@ from gpt_engineer.core.ai import AI
 from gpt_engineer.core.preprompts_holder import PrepromptsHolder
 from gpt_engineer.core.prompt import Prompt
 
+# Import database-backed state management
+from .state_manager import get_state_manager, cleanup_state_manager
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global state - simplified to single session management
-active_session = None
-stream_sessions = {}
+# Initialize database-backed state manager
+state_manager = get_state_manager()
 
 # Initialize observability globally
 observability = None
@@ -44,73 +46,13 @@ except ImportError:
     observability = None
 
 
-class Trace:
-    """Represents a single turn in a multi-turn conversation."""
-
-    def __init__(self, trace_id: str, prompt: str, mode: str = None):
-        self.trace_id = trace_id
-        self.prompt = prompt
-        self.mode = mode
-        self.files = {}
-        self.feedback = None
-        self.execution_result = None
-        self.created_at = time.time()
-
-    def to_dict(self) -> Dict:
-        """Convert trace to dictionary for JSON serialization."""
-        return {
-            "trace_id": self.trace_id,
-            "prompt": self.prompt,
-            "mode": self.mode,
-            "files": self.files,
-            "feedback": self.feedback,
-            "execution_result": self.execution_result,
-            "created_at": self.created_at,
-        }
-
-
-class Session:
-    """Represents a complete multi-turn conversation session."""
-
-    def __init__(self, session_id: str, project_path: str):
-        self.session_id = session_id
-        self.project_path = project_path
-        self.traces: List[Trace] = []
-        self.current_files = {}
-        self.created_at = time.time()
-        self.last_activity = time.time()
-
-    def add_trace(self, trace: Trace) -> None:
-        """Add a new trace to the session."""
-        self.traces.append(trace)
-        self.last_activity = time.time()
-
-    def get_trace(self, trace_id: str) -> Optional[Trace]:
-        """Get a specific trace by ID."""
-        for trace in self.traces:
-            if trace.trace_id == trace_id:
-                return trace
-        return None
-
-    def get_latest_trace(self) -> Optional[Trace]:
-        """Get the most recent trace."""
-        return self.traces[-1] if self.traces else None
-
-    def to_dict(self) -> Dict:
-        """Convert session to dictionary for JSON serialization."""
-        return {
-            "session_id": self.session_id,
-            "project_path": self.project_path,
-            "traces": [trace.to_dict() for trace in self.traces],
-            "current_files": self.current_files,
-            "created_at": self.created_at,
-            "last_activity": self.last_activity,
-        }
+# Note: Trace and Session classes have been replaced by database-backed versions
+# in state_manager.py - DatabaseBackedTrace and DatabaseBackedSession
 
 
 class WebMultiTurnEngine:
     """
-    Web UI wrapper for the MultiTurnEngine that properly manages sessions and traces.
+    Web UI wrapper for the MultiTurnEngine that uses database-backed state management.
     """
 
     def __init__(
@@ -134,7 +76,6 @@ class WebMultiTurnEngine:
         self.project_path = project_path
         self.preprompts_holder = preprompts_holder
         self.session_id = session_id
-        self.trace_streams = {}  # Store stream output per trace
         self.turn_number = 0  # Track conversation turns
 
         # Initialize observability for this session
@@ -188,30 +129,15 @@ class WebMultiTurnEngine:
 
         self.engine = MultiTurnEngine(ai, project_path, preprompts_holder, web_ui=True)
 
-        # Initialize stream for this session
-        if session_id:
-            stream_sessions[session_id] = []
-
-        # Initialize pending execution state
-        self.pending_execution = None
-
     def add_stream_output(self, message: str, trace_id: str = None):
         """Add output to the stream for this session."""
-        if self.session_id and self.session_id in stream_sessions:
-            # Remove timestamp formatting - just use the message as is
-            stream_sessions[self.session_id].append(message)
-
-            # Store stream output per trace if trace_id is provided
-            if trace_id:
-                if trace_id not in self.trace_streams:
-                    self.trace_streams[trace_id] = []
-                self.trace_streams[trace_id].append(message)
+        if self.session_id:
+            state_manager.add_stream_output(self.session_id, message, trace_id)
 
     def clear_stream_output(self):
         """Clear stream output for this session."""
-        if self.session_id and self.session_id in stream_sessions:
-            # Add a special message to indicate stream was cleared
-            stream_sessions[self.session_id] = ["[STREAM_CLEARED]"]
+        if self.session_id:
+            state_manager.clear_stream_output(self.session_id)
             logger.info(f"Cleared stream output for session: {self.session_id}")
 
     @contextmanager
@@ -297,11 +223,8 @@ class WebMultiTurnEngine:
                     self.add_stream_output("", trace_id)
                     self.add_stream_output(command_to_execute, trace_id)
                     self.add_stream_output("", trace_id)
-                    # Store the command for later execution
-                    self.pending_execution = {
-                        "command": command_to_execute,
-                        "detected": True,
-                    }
+                    # Store the command for later execution in database
+                    state_manager.save_pending_execution(self.session_id, command_to_execute, True)
 
             if stderr_content:
                 for line in stderr_content.strip().split("\n"):
@@ -346,8 +269,8 @@ class WebMultiTurnEngine:
         self.turn_number += 1
 
         # Create a new trace for this prompt
-        trace_id = str(uuid.uuid4())
-        trace = Trace(trace_id, prompt_text)
+        trace = state_manager.create_trace(self.session_id, prompt_text)
+        trace_id = trace.trace_id
 
         # Initialize trace for this prompt
         if self.observability and self.observability.is_enabled():
@@ -411,6 +334,13 @@ class WebMultiTurnEngine:
                 "mode": mode,
                 "files_count": len(files_dict),
             }
+            
+            # Store generated files in session for later execution
+            session = state_manager.get_or_create_session(self.session_id)
+            session.current_files = files_dict
+            
+            # Also update the engine's current_files
+            self.engine.current_files = files_dict
 
             # Add completion message
             self.add_stream_output(
@@ -476,7 +406,12 @@ class WebMultiTurnEngine:
 
     def has_pending_execution(self) -> bool:
         """Check if there's pending execution for this session."""
-        return hasattr(self, "pending_execution") and self.pending_execution is not None
+        return state_manager.has_pending_execution(self.session_id)
+    
+    @property
+    def pending_execution(self) -> Optional[Dict]:
+        """Get pending execution data."""
+        return state_manager.get_pending_execution(self.session_id)
 
     def cleanup(self):
         """Clean up observability session when done."""
@@ -551,6 +486,35 @@ def create_preprompts_holder(project_path: str) -> PrepromptsHolder:
     return PrepromptsHolder(PREPROMPTS_PATH)
 
 
+def recreate_engine_with_files(session_id: str, project_path: str) -> 'WebMultiTurnEngine':
+    """
+    Recreate an engine and load current files from the session.
+    
+    Parameters
+    ----------
+    session_id : str
+        The session ID.
+    project_path : str
+        The project path.
+        
+    Returns
+    -------
+    WebMultiTurnEngine
+        The recreated engine with current files loaded.
+    """
+    ai = create_ai_instance()
+    preprompts_holder = create_preprompts_holder(project_path)
+    engine = WebMultiTurnEngine(ai, project_path, preprompts_holder, session_id)
+    
+    # Load current files from session database
+    current_files = state_manager.session_file_repo.get_session_files(session_id)
+    if current_files:
+        engine.engine.current_files = current_files
+        logger.info(f"Loaded {len(current_files)} files into recreated engine for session {session_id}")
+    
+    return engine
+
+
 # Create Flask app
 app = Flask(__name__)
 CORS(app)
@@ -577,8 +541,6 @@ def chat():
     -------
     JSON response with conversation results.
     """
-    global active_session
-
     try:
         data = request.get_json()
         prompt_text = data.get("prompt", "").strip()
@@ -592,46 +554,38 @@ def chat():
             session_id = str(uuid.uuid4())
 
         logger.info(f"Processing prompt for session: {session_id}")
-        logger.info(f"Current active_session: {active_session}")
 
-        # Create or get session
+        # Get or create session using state manager
+        active_session = state_manager.get_active_session()
         if not active_session or active_session.session_id != session_id:
             # Create new session
             logger.info(f"Creating new session: {session_id}")
             project_path = f"projects/web_session_{session_id}"
-            ai = create_ai_instance()
-            preprompts_holder = create_preprompts_holder(project_path)
 
-            active_session = Session(session_id, project_path)
-            active_session.engine = WebMultiTurnEngine(
-                ai, project_path, preprompts_holder, session_id
-            )
+            # Create session in database
+            active_session = state_manager.get_or_create_session(session_id, project_path)
+            state_manager.set_active_session(session_id)
+            
+            # Create engine and store reference
+            active_session.engine = recreate_engine_with_files(session_id, project_path)
+            
             logger.info(f"Session created successfully: {active_session.session_id}")
-
-            # Verify session was created properly
-            if (
-                not active_session
-                or not hasattr(active_session, "engine")
-                or not active_session.engine
-            ):
-                logger.error("Session creation failed - session or engine is None")
-                return (
-                    jsonify({"success": False, "error": "Session creation failed"}),
-                    500,
-                )
         else:
             # Reuse existing session for multi-turn conversation
             logger.info(f"Reusing existing session: {session_id}")
+            
+            # Ensure engine exists for the session (it's transient and not persisted in DB)
+            if not hasattr(active_session, 'engine') or not active_session.engine:
+                logger.info(f"Recreating engine for existing session: {session_id}")
+                active_session.engine = recreate_engine_with_files(session_id, active_session.project_path)
+            
             # Clear stream output for new prompt in existing session
-            active_session.engine.clear_stream_output()
+            if hasattr(active_session, 'engine') and active_session.engine:
+                active_session.engine.clear_stream_output()
             # Update last activity
-            active_session.last_activity = time.time()
+            active_session.update_last_activity()
 
-        # Process the prompt
-        if not active_session:
-            logger.error("Active session is None after session creation")
-            return jsonify({"success": False, "error": "Session creation failed"}), 500
-
+        # Ensure we have an engine
         if not hasattr(active_session, "engine") or not active_session.engine:
             logger.error("Session engine is not properly initialized")
             return (
@@ -639,19 +593,10 @@ def chat():
                 500,
             )
 
-        if not hasattr(active_session, "add_trace"):
-            logger.error("Session is missing add_trace method")
-            return (
-                jsonify(
-                    {"success": False, "error": "Session is not properly initialized"}
-                ),
-                500,
-            )
-
         engine = active_session.engine
 
         # Check if there's pending execution and block new input
-        if hasattr(engine, "pending_execution") and engine.pending_execution:
+        if engine.has_pending_execution():
             logger.info("Blocking new input - pending execution exists")
             return (
                 jsonify(
@@ -692,23 +637,8 @@ def chat():
             except Exception as e:
                 logger.warning(f"Failed to log turn completion event: {e}")
 
-        # Create trace and add to session
-        try:
-            if active_session and hasattr(active_session, "add_trace"):
-                trace = Trace(result.get("trace_id"), prompt_text, result.get("mode"))
-                trace.files = result.get("files", {})
-                trace.execution_result = result
-
-                active_session.add_trace(trace)
-                logger.info(f"Trace added successfully: {trace.trace_id}")
-            else:
-                logger.warning(
-                    "Active session is None or missing add_trace method - skipping trace creation"
-                )
-        except Exception as trace_error:
-            logger.error(f"Error creating/adding trace: {trace_error}")
-            # Continue without trace if there's an error
-            pass
+        # Trace is already created and managed by the database
+        logger.info(f"Trace processed successfully: {result.get('trace_id')}")
 
         # Add session ID to response
         result["session_id"] = session_id
@@ -725,8 +655,6 @@ def execute_code():
     """
     Handle code execution confirmation from the web interface.
     """
-    global active_session
-
     try:
         data = request.get_json()
         session_id = data.get("session_id")
@@ -755,7 +683,8 @@ def execute_code():
             f"Processing execution confirmation for session: {session_id}, user_response: {user_response}"
         )
 
-        # Check if session exists
+        # Get session from state manager
+        active_session = state_manager.get_active_session()
         if not active_session or active_session.session_id != session_id:
             logger.error(f"Session {session_id} not found")
             return jsonify({"success": False, "error": "Session not found"}), 404
@@ -764,17 +693,30 @@ def execute_code():
         user_confirmed = user_response.lower() in ["", "y", "yes"]
         if not user_confirmed:
             logger.info("User declined execution")
+            
+            # Ensure we have an engine for stream output - recreate if missing
+            if not hasattr(active_session, 'engine') or not active_session.engine:
+                logger.info(f"Recreating engine for decline message in session: {session_id}")
+                active_session.engine = recreate_engine_with_files(session_id, active_session.project_path)
+            
             active_session.engine.add_stream_output("Ok, not executing the code.")
             # Clear pending execution when user declines
-            active_session.engine.pending_execution = None
+            state_manager.clear_pending_execution(session_id)
             # Clear stream output when user declines
             active_session.engine.clear_stream_output()
+            
             return jsonify(
                 {"success": True, "message": "Execution declined", "executed": False}
             )
 
         # User confirmed execution
         logger.info("User confirmed execution")
+        
+        # Ensure we have an engine before proceeding - recreate if missing
+        if not hasattr(active_session, 'engine') or not active_session.engine:
+            logger.info(f"Recreating engine for execution in session: {session_id}")
+            active_session.engine = recreate_engine_with_files(session_id, active_session.project_path)
+            
         active_session.engine.add_stream_output("Executing the code...")
         active_session.engine.add_stream_output("")
         active_session.engine.add_stream_output(
@@ -809,8 +751,9 @@ def execute_code():
                 logger.warning(f"Failed to log user confirmation event: {e}")
 
         # Execute the pending command
-        if active_session.engine.pending_execution:
-            active_session.engine.pending_execution["command"]
+        pending_execution = state_manager.get_pending_execution(session_id)
+        if pending_execution:
+            command = pending_execution["command"]
 
             try:
                 # Import the execute_entrypoint_next function
@@ -825,7 +768,7 @@ def execute_code():
                 )
 
                 # Clear pending execution
-                active_session.engine.pending_execution = None
+                state_manager.clear_pending_execution(session_id)
 
                 # Clear stream output after successful execution
                 active_session.engine.clear_stream_output()
@@ -924,14 +867,16 @@ def execute_code():
             except Exception as e:
                 error_msg = f"Error executing code: {e}"
                 logger.error(error_msg)
-                active_session.engine.add_stream_output(error_msg)
+                if hasattr(active_session, 'engine') and active_session.engine:
+                    active_session.engine.add_stream_output(error_msg)
+                    # Clear stream output after error
+                    active_session.engine.clear_stream_output()
                 # Clear pending execution on error
-                active_session.engine.pending_execution = None
-                # Clear stream output after error
-                active_session.engine.clear_stream_output()
+                state_manager.clear_pending_execution(session_id)
 
                 # End the current trace with error output
                 if (
+                    hasattr(active_session, 'engine') and active_session.engine and
                     hasattr(active_session.engine, "current_trace_id")
                     and active_session.engine.current_trace_id
                 ):
@@ -1016,10 +961,10 @@ def get_session_status(session_id: str):
     -------
     JSON response with session status.
     """
-    global active_session
-
     try:
-        if not active_session or active_session.session_id != session_id:
+        # Check if session exists in database
+        session_data = state_manager.session_repo.get_session(session_id)
+        if not session_data:
             return (
                 jsonify(
                     {
@@ -1031,20 +976,15 @@ def get_session_status(session_id: str):
                 404,
             )
 
-        engine = active_session.engine
-        has_pending_execution = (
-            hasattr(engine, "pending_execution")
-            and engine.pending_execution is not None
-        )
+        has_pending_execution = state_manager.has_pending_execution(session_id)
+        pending_execution = state_manager.get_pending_execution(session_id) if has_pending_execution else None
 
         return jsonify(
             {
                 "success": True,
                 "session_exists": True,
                 "has_pending_execution": has_pending_execution,
-                "pending_execution": engine.pending_execution
-                if has_pending_execution
-                else None,
+                "pending_execution": pending_execution,
             }
         )
 
@@ -1074,36 +1014,35 @@ def stream_output(session_id: str):
         # Send initial connection message
         yield f"data: {json.dumps({'type': 'connected', 'message': 'Stream connected'})}\n\n"
 
-        # Get existing messages
-        if session_id in stream_sessions:
-            for message in stream_sessions[session_id]:
-                # Handle special stream cleared message
-                if message == "[STREAM_CLEARED]":
-                    yield f"data: {json.dumps({'type': 'stream_cleared', 'message': 'Stream cleared'})}\n\n"
-                else:
-                    yield f"data: {json.dumps({'type': 'message', 'message': message})}\n\n"
+        # Get existing messages from database
+        current_messages = state_manager.get_stream_output(session_id)
+        for message in current_messages:
+            # Handle special stream cleared message
+            if message == "[STREAM_CLEARED]":
+                yield f"data: {json.dumps({'type': 'stream_cleared', 'message': 'Stream cleared'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'message', 'message': message})}\n\n"
 
         # Keep track of last message index
-        last_index = len(stream_sessions.get(session_id, []))
+        last_index = len(current_messages)
 
         # Keep connection alive and check for new messages
         try:
             while True:
                 time.sleep(0.5)  # Check every 500ms
 
-                # Check for new messages
-                if session_id in stream_sessions:
-                    current_messages = stream_sessions[session_id]
-                    if len(current_messages) > last_index:
-                        # Send new messages
-                        for i in range(last_index, len(current_messages)):
-                            message = current_messages[i]
-                            # Handle special stream cleared message
-                            if message == "[STREAM_CLEARED]":
-                                yield f"data: {json.dumps({'type': 'stream_cleared', 'message': 'Stream cleared'})}\n\n"
-                            else:
-                                yield f"data: {json.dumps({'type': 'message', 'message': message})}\n\n"
-                        last_index = len(current_messages)
+                # Check for new messages from database
+                current_messages = state_manager.get_stream_output(session_id)
+                if len(current_messages) > last_index:
+                    # Send new messages
+                    for i in range(last_index, len(current_messages)):
+                        message = current_messages[i]
+                        # Handle special stream cleared message
+                        if message == "[STREAM_CLEARED]":
+                            yield f"data: {json.dumps({'type': 'stream_cleared', 'message': 'Stream cleared'})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'type': 'message', 'message': message})}\n\n"
+                    last_index = len(current_messages)
 
                 # Send ping to keep connection alive
                 yield f"data: {json.dumps({'type': 'ping', 'timestamp': time.time()})}\n\n"
@@ -1135,10 +1074,12 @@ def get_stream_history(session_id: str):
     -------
     JSON response with stream history.
     """
-    if session_id in stream_sessions:
-        return jsonify({"success": True, "messages": stream_sessions[session_id]})
-    else:
-        return jsonify({"success": False, "error": "Session not found"}), 404
+    try:
+        messages = state_manager.get_stream_output(session_id)
+        return jsonify({"success": True, "messages": messages})
+    except Exception as e:
+        logger.error(f"Error getting stream history: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/stream/<session_id>/trace/<trace_id>/history")
@@ -1157,22 +1098,15 @@ def get_trace_stream_history(session_id: str, trace_id: str):
     -------
     JSON response with trace stream history.
     """
-    global active_session
-
     try:
-        if not active_session or active_session.session_id != session_id:
+        # Verify session exists
+        session_data = state_manager.session_repo.get_session(session_id)
+        if not session_data:
             return jsonify({"success": False, "error": "Session not found"}), 404
 
-        engine = active_session.engine
-        if hasattr(engine, "trace_streams") and trace_id in engine.trace_streams:
-            return jsonify(
-                {"success": True, "messages": engine.trace_streams[trace_id]}
-            )
-        else:
-            return (
-                jsonify({"success": False, "error": "Trace stream history not found"}),
-                404,
-            )
+        # Get trace stream history
+        messages = state_manager.get_trace_stream_output(trace_id)
+        return jsonify({"success": True, "messages": messages})
 
     except Exception as e:
         logger.error(f"Error getting trace stream history: {e}")
@@ -1193,12 +1127,13 @@ def get_conversation_history(session_id: str):
     -------
     JSON response with conversation history.
     """
-    global active_session
-
-    if active_session and active_session.session_id == session_id:
-        return jsonify({"success": True, "session": active_session.to_dict()})
-    else:
-        return jsonify({"success": False, "error": "Session not found"}), 404
+    try:
+        # Get session from database
+        session = state_manager.get_or_create_session(session_id)
+        return jsonify({"success": True, "session": session.to_dict()})
+    except Exception as e:
+        logger.error(f"Error getting conversation history: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/session/<session_id>/files", methods=["GET"])
@@ -1215,12 +1150,13 @@ def get_session_files(session_id: str):
     -------
     JSON response with session files.
     """
-    global active_session
-
-    if active_session and active_session.session_id == session_id:
-        return jsonify({"success": True, "files": active_session.current_files})
-    else:
-        return jsonify({"success": False, "error": "Session not found"}), 404
+    try:
+        # Get session files from database
+        files = state_manager.session_file_repo.get_session_files(session_id)
+        return jsonify({"success": True, "files": files})
+    except Exception as e:
+        logger.error(f"Error getting session files: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/sessions", methods=["GET"])
@@ -1232,20 +1168,18 @@ def list_sessions():
     -------
     JSON response with session list.
     """
-    global active_session
-
-    sessions = []
-    if active_session:
-        sessions.append(
-            {
-                "session_id": active_session.session_id,
-                "created_at": active_session.created_at,
-                "last_activity": active_session.last_activity,
-                "trace_count": len(active_session.traces),
-            }
-        )
-
-    return jsonify({"success": True, "sessions": sessions})
+    try:
+        # Get all sessions from database
+        sessions = state_manager.list_sessions()
+        # Add trace count for each session
+        for session in sessions:
+            traces = state_manager.trace_repo.get_session_traces(session['session_id'])
+            session['trace_count'] = len(traces)
+        
+        return jsonify({"success": True, "sessions": sessions})
+    except Exception as e:
+        logger.error(f"Error listing sessions: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/session/<session_id>", methods=["DELETE"])
@@ -1262,23 +1196,24 @@ def delete_session(session_id: str):
     -------
     JSON response indicating success.
     """
-    global active_session
+    try:
+        # Check if it's the active session and clean up engine
+        active_session = state_manager.get_active_session()
+        if active_session and active_session.session_id == session_id:
+            # Clean up observability session
+            if hasattr(active_session, "engine") and active_session.engine:
+                active_session.engine.cleanup()
 
-    if active_session and active_session.session_id == session_id:
-        # Clean up observability session
-        if hasattr(active_session, "engine"):
-            active_session.engine.cleanup()
-
-        # Clear stream session
-        if session_id in stream_sessions:
-            del stream_sessions[session_id]
-
-        # Clear active session
-        active_session = None
-
-        return jsonify({"success": True, "message": "Session deleted"})
-    else:
-        return jsonify({"success": False, "error": "Session not found"}), 404
+        # Delete session from database (cascades to all related data)
+        success = state_manager.delete_session(session_id)
+        
+        if success:
+            return jsonify({"success": True, "message": "Session deleted"})
+        else:
+            return jsonify({"success": False, "error": "Session not found"}), 404
+    except Exception as e:
+        logger.error(f"Error deleting session: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/reset", methods=["POST"])
@@ -1290,17 +1225,16 @@ def reset_all_sessions():
     -------
     JSON response indicating success.
     """
-    global active_session
-
     try:
-        # Clean up active session
-        if active_session and hasattr(active_session, "engine"):
+        # Clean up active session if it exists
+        active_session = state_manager.get_active_session()
+        if active_session and hasattr(active_session, "engine") and active_session.engine:
             active_session.engine.cleanup()
 
-        # Clear all sessions
-        active_session = None
-        stream_sessions.clear()
-
+        # Note: We don't actually delete sessions from database on reset
+        # as this is just a page refresh. Sessions remain in database
+        # for persistence across browser sessions.
+        
         logger.info("All sessions reset")
 
         return jsonify({"success": True, "message": "All sessions reset"})
@@ -1345,55 +1279,57 @@ def submit_feedback():
             logger.error("❌ No trace_id provided")
             return jsonify({"success": False, "error": "Trace ID is required"}), 400
 
-        if not active_session or active_session.session_id != session_id:
-            logger.error(f"❌ Session {session_id} not found in active sessions")
+        # Verify session exists
+        session_data = state_manager.session_repo.get_session(session_id)
+        if not session_data:
+            logger.error(f"❌ Session {session_id} not found in database")
             return jsonify({"success": False, "error": "Session not found"}), 404
 
-        # Find the trace
-        trace = active_session.get_trace(trace_id)
-        if not trace:
+        # Find the trace in database
+        trace_data = state_manager.trace_repo.get_trace(trace_id)
+        if not trace_data or trace_data['session_id'] != session_id:
             logger.error(f"❌ Trace {trace_id} not found in session {session_id}")
             return jsonify({"success": False, "error": "Trace not found"}), 404
 
         logger.info(f"✅ Found trace data for {trace_id}")
 
-        # Update trace feedback
-        trace.feedback = feedback_score
+        # Update trace feedback in database
+        state_manager.trace_repo.update_trace_feedback(trace_id, feedback_score)
 
-        if hasattr(active_session, "engine") and active_session.engine:
+        # Get active session for observability if available
+        active_session = state_manager.get_active_session()
+        engine = None
+        
+        # Check if we have an active session with an engine
+        if active_session and active_session.session_id == session_id and hasattr(active_session, "engine") and active_session.engine:
             engine = active_session.engine
             logger.info("🔧 Engine found in session data")
+        else:
+            # No active engine - recreate for observability if this is the correct session
+            if active_session and active_session.session_id == session_id:
+                logger.info("🔄 Recreating engine for observability feedback")
+                active_session.engine = recreate_engine_with_files(session_id, active_session.project_path)
+                engine = active_session.engine
+            else:
+                # Different session or no active session - create temporary session for feedback
+                logger.info(f"🔄 Creating temporary session for feedback observability in session {session_id}")
+                temp_session = state_manager.get_or_create_session(session_id, session_data['project_path'])
+                temp_session.engine = recreate_engine_with_files(session_id, session_data['project_path'])
+                engine = temp_session.engine
 
-            if (
-                hasattr(engine, "observability")
-                and engine.observability
-                and engine.observability.is_enabled()
-            ):
-                logger.info("📊 Observability is enabled, adding feedback")
-                try:
-                    # Validate session state before adding feedback
-                    if hasattr(engine.observability, "validate_session_state"):
-                        if not engine.observability.validate_session_state():
-                            logger.warning(
-                                "Session state validation failed, attempting recovery"
-                            )
-                            if hasattr(engine.observability, "recover_session_state"):
-                                if not engine.observability.recover_session_state():
-                                    logger.error(
-                                        "Session recovery failed, skipping feedback"
-                                    )
-                                    return (
-                                        jsonify(
-                                            {
-                                                "success": False,
-                                                "error": "Session state validation failed",
-                                            }
-                                        ),
-                                        500,
-                                    )
-                            else:
+        if engine and hasattr(engine, "observability") and engine.observability and engine.observability.is_enabled():
+            logger.info("📊 Observability is enabled, adding feedback")
+            try:
+                # Validate session state before adding feedback
+                if hasattr(engine.observability, "validate_session_state"):
+                    if not engine.observability.validate_session_state():
+                        logger.warning(
+                            "Session state validation failed, attempting recovery"
+                        )
+                        if hasattr(engine.observability, "recover_session_state"):
+                            if not engine.observability.recover_session_state():
                                 logger.error(
-                                    "Session validation failed and no recovery method available"
+                                    "Session recovery failed, skipping feedback"
                                 )
                                 return (
                                     jsonify(
@@ -1404,70 +1340,74 @@ def submit_feedback():
                                     ),
                                     500,
                                 )
+                        else:
+                            logger.error(
+                                "Session validation failed and no recovery method available"
+                            )
+                            return (
+                                jsonify(
+                                    {
+                                        "success": False,
+                                        "error": "Session state validation failed",
+                                    }
+                                ),
+                                500,
+                            )
 
-                    # Add feedback to trace
-                    engine.observability.add_feedback(feedback_score, trace_id=trace_id)
+                # Add feedback to trace
+                engine.observability.add_feedback(feedback_score, trace_id=trace_id)
 
-                    # # Also add session-level feedback for comprehensive tracking
-                    # if hasattr(engine.observability, 'add_session_feedback'):
-                    #     # Create a simple review object for session feedback
-                    #     class SimpleReview:
-                    #         def __init__(self, score):
-                    #             self.perfect = score == 1
-                    #             self.works = score == 1
-                    #             self.ran = score == 1
-                    #             self.raw = f"Web UI feedback score: {score}"
-                    #             self.comments = f"Web UI user feedback: {score}"
+                # # Also add session-level feedback for comprehensive tracking
+                # if hasattr(engine.observability, 'add_session_feedback'):
+                #     # Create a simple review object for session feedback
+                #     class SimpleReview:
+                #         def __init__(self, score):
+                #             self.perfect = score == 1
+                #             self.works = score == 1
+                #             self.ran = score == 1
+                #             self.raw = f"Web UI feedback score: {score}"
+                #             self.comments = f"Web UI user feedback: {score}"
 
-                    #     review = SimpleReview(feedback_score)
+                #     review = SimpleReview(feedback_score)
 
-                    #     # Validate session state before adding session feedback
-                    #     if hasattr(engine.observability, 'validate_session_state'):
-                    #         if not engine.observability.validate_session_state():
-                    #             logger.warning("Session state validation failed for session feedback, attempting recovery")
-                    #             if hasattr(engine.observability, 'recover_session_state'):
-                    #                 if not engine.observability.recover_session_state():
-                    #                     logger.error("Session recovery failed for session feedback")
-                    #                     # Continue without session feedback rather than failing completely
-                    #                 else:
-                    #                     engine.observability.safe_add_session_feedback(review)
-                    #             else:
-                    #                 logger.error("Session validation failed and no recovery method available for session feedback")
-                    #                 # Continue without session feedback rather than failing completely
-                    #         else:
-                    #             engine.observability.safe_add_session_feedback(review)
-                    #     else:
-                    #         # Fallback to direct call if validation not available
-                    #         engine.observability.add_session_feedback(review)
+                #     # Validate session state before adding session feedback
+                #     if hasattr(engine.observability, 'validate_session_state'):
+                #         if not engine.observability.validate_session_state():
+                #             logger.warning("Session state validation failed for session feedback, attempting recovery")
+                #             if hasattr(engine.observability, 'recover_session_state'):
+                #                 if not engine.observability.recover_session_state():
+                #                     logger.error("Session recovery failed for session feedback")
+                #                     # Continue without session feedback rather than failing completely
+                #                 else:
+                #                     engine.observability.safe_add_session_feedback(review)
+                #             else:
+                #                 logger.error("Session validation failed and no recovery method available for session feedback")
+                #                 # Continue without session feedback rather than failing completely
+                #         else:
+                #             engine.observability.safe_add_session_feedback(review)
+                #     else:
+                #         # Fallback to direct call if validation not available
+                #         engine.observability.add_session_feedback(review)
 
-                    # logger.info(
-                    #     f"✅ Feedback submitted successfully: {feedback_score} for session {session_id}, trace {trace_id}"
-                    # )
-                except Exception as obs_error:
-                    logger.error(
-                        f"💥 Error adding feedback to observability: {obs_error}"
-                    )
-                    return (
-                        jsonify(
-                            {
-                                "success": False,
-                                "error": f"Observability error: {str(obs_error)}",
-                            }
-                        ),
-                        500,
-                    )
-            else:
-                logger.warning("⚠️ Observability not available for feedback")
+                # logger.info(
+                #     f"✅ Feedback submitted successfully: {feedback_score} for session {session_id}, trace {trace_id}"
+                # )
+            except Exception as obs_error:
+                logger.error(
+                    f"💥 Error adding feedback to observability: {obs_error}"
+                )
                 return (
-                    jsonify({"success": False, "error": "Observability not available"}),
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": f"Observability error: {str(obs_error)}",
+                        }
+                    ),
                     500,
                 )
         else:
-            logger.error(f"❌ No engine found in session {session_id}")
-            return (
-                jsonify({"success": False, "error": "Engine not found in session"}),
-                500,
-            )
+            logger.warning("⚠️ Observability not available for feedback")
+            # Still return success since feedback was saved to database
 
         logger.info("🎉 Feedback processing completed successfully")
         return jsonify(
@@ -1492,6 +1432,9 @@ if __name__ == "__main__":
     try:
         app.run(debug=True, host="0.0.0.0", port=5001)
     finally:
+        # Clean up database connections
+        cleanup_state_manager()
+        
         # Clean up global observability
         if observability and observability.is_enabled():
             try:
