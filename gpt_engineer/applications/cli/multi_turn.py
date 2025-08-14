@@ -385,7 +385,7 @@ Examples:
                     },
                 )
 
-            if observability and observability.is_enabled():
+            if observability and observability.is_enabled() and not self.web_ui:
                 trace_output_content = (
                     "Debug mode successfully completed, no modification needed"
                 )
@@ -402,6 +402,23 @@ Examples:
                 memory=self.memory,
                 execution_timeout=30,  # 30 second timeout for CLI execution
             )
+
+            # Set trace output after files_dict is available
+            if observability and observability.is_enabled():
+                # Format trace output differently based on whether we're in web UI
+                if self.web_ui:
+                    # For web UI, use a simpler format similar to format_trace_output in app.py
+                    trace_output_content = "Mode: debug\n"
+                    trace_output_content += f"Files generated: {len(files_dict) if files_dict else 0}\n\n"
+                    trace_output_content += "🤖 Debug Summary:\n"
+                    trace_output_content += "Debug mode completed - issues have been analyzed and fixed\n"
+                else:
+                    # For CLI, use the original format
+                    trace_output_content = (
+                        "Debug mode successfully completed, no modification needed"
+                    )
+                observability.set_trace_output(trace_output_content)
+                print(f"🔍 Trace Output Set: {trace_output_content}")
 
             if OBSERVABILITY_AVAILABLE and files_dict:
                 try:
@@ -1124,8 +1141,31 @@ Examples:
                         / max(self.ai.token_usage_log.total_tokens(), 1),
                     }
 
-                # Format as markdown
-                trace_output = f"""# 🎯 Turn {turn_number} Summary
+                # Format trace output differently based on whether we're in web UI
+                if self.web_ui:
+                    # For web UI, use a simpler format similar to format_trace_output in app.py
+                    trace_output = f"Mode: {mode}\n"
+                    trace_output += f"Files generated: {len(files_dict)}\n\n"
+                    
+                    # Add AI-generated summary placeholder (would need to be implemented)
+                    trace_output += f"🤖 Multi-turn Summary:\n"
+                    trace_output += f"Turn {turn_number}: {mode.title()} mode completed with {len(files_dict)} files\n\n"
+                    
+                    if files_dict and len(files_dict) > 0:
+                        trace_output += "Generated files:\n"
+                        for filename in files_dict.keys():
+                            trace_output += f"• {filename}\n"
+                    
+                    # For generate mode, add execution prompt
+                    if mode == "generate" and files_dict:
+                        # Check if there's a run script
+                        run_scripts = [f for f in files_dict.keys() if f.lower() in ['run.sh', 'run.bat', 'start.sh']]
+                        if run_scripts:
+                            trace_output += f"\nDo you want to execute this code? (Y/n)\n"
+                            trace_output += f"./{run_scripts[0]}\n"
+                else:
+                    # For CLI, use the detailed markdown format
+                    trace_output = f"""# 🎯 Turn {turn_number} Summary
 
 ## 📊 Overview
 - **Mode**: {mode.title()}

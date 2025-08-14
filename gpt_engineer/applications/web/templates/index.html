@@ -734,7 +734,31 @@
             scroll-behavior: smooth;
         }
 
+        /* AI Summary Section Styles */
+        .ai-summary-section {
+            background-color: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
 
+        .ai-summary-section h3 {
+            margin: 0 0 15px 0;
+            color: #f0f6fc;
+            font-size: 16px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .ai-summary-content p {
+            margin: 0;
+            color: #c9d1d9;
+            line-height: 1.5;
+            font-size: 14px;
+        }
 
         /* Footer */
         .preview-footer {
@@ -961,7 +985,8 @@
                                 mode: result.mode,
                                 files: result.files || {},
                                 feedback: null,
-                                timestamp: new Date().toISOString()
+                                timestamp: new Date().toISOString(),
+                                ai_summary: result.ai_summary || null
                             };
                             this.sessionTraces.set(result.trace_id, traceData);
 
@@ -1091,9 +1116,12 @@
             }
 
             formatAgentResponse(result) {
-                let response = `Mode: ${result.mode}\n`;
-                response += `Files generated: ${result.files_count}\n\n`;
-
+                let response = '';
+                // Add AI-generated summary
+                if (result.ai_summary) {
+                    response += `${result.ai_summary}\n\n`;
+                }
+                response += `Files generated: ${result.files_count}\n`;
                 if (result.files && Object.keys(result.files).length > 0) {
                     response += 'Generated files:\n';
                     for (const [filename, content] of Object.entries(result.files)) {
@@ -1592,7 +1620,8 @@
                                 mode: traceData.mode,
                                 files: traceData.files || {},
                                 feedback: traceData.feedback,
-                                timestamp: new Date(traceData.created_at * 1000).toISOString()
+                                timestamp: new Date(traceData.created_at * 1000).toISOString(),
+                                ai_summary: traceData.execution_result?.ai_summary || null
                             });
 
                             // Store files

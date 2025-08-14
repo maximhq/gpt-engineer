@@ -395,9 +395,11 @@ def execute_entrypoint(
         print()
 
         if observability and observability.is_enabled():
-            trace_output_content = f"{command}\nDo you want to execute this code? (Y/n)"
-            observability.set_trace_output(trace_output_content)
-            observability.end_trace()
+            # Only set trace output if not in web UI mode - web UI handles its own trace output
+            if not web_ui:
+                trace_output_content = f"{command}\nDo you want to execute this code? (Y/n)"
+                observability.set_trace_output(trace_output_content)
+                observability.end_trace()
 
     finally:
         if web_ui:
@@ -517,9 +519,10 @@ def execute_entrypoint_next(
             )
 
         try:
+            # Execute the entrypoint file
             result = uploaded_result.run(f"bash {ENTRYPOINT_FILE}", timeout=timeout)
             if observability and observability.is_enabled():
-                observability.set_trace_output(str(result))
+                observability.set_trace_output(f"Code executed successfully , {str(result)}")
         except TimeoutExpired as timeout_error:
             if observability and observability.is_enabled() and tool_call_id:
                 observability.log_tool_call(
