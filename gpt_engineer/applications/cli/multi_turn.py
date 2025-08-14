@@ -389,7 +389,7 @@ Examples:
                 trace_output_content = (
                     "Debug mode successfully completed, no modification needed"
                 )
-                observability.set_trace_output(trace_output_content)
+                # observability.set_trace_output(trace_output_content)
                 print(f"🔍 Trace Output Set: {trace_output_content}")
 
             # Use self-heal functionality
@@ -406,17 +406,17 @@ Examples:
             # Set trace output after files_dict is available
             if observability and observability.is_enabled():
                 # Format trace output differently based on whether we're in web UI
-                if self.web_ui:
+                # if self.web_ui:
                     # For web UI, use a simpler format similar to format_trace_output in app.py
-                    trace_output_content = "Mode: debug\n"
-                    trace_output_content += f"Files generated: {len(files_dict) if files_dict else 0}\n\n"
-                    trace_output_content += "🤖 Debug Summary:\n"
-                    trace_output_content += "Debug mode completed - issues have been analyzed and fixed\n"
-                else:
-                    # For CLI, use the original format
-                    trace_output_content = (
-                        "Debug mode successfully completed, no modification needed"
-                    )
+                trace_output_content = "Mode: debug\n"
+                trace_output_content += f"Files generated: {len(files_dict) if files_dict else 0}\n\n"
+                trace_output_content += "🤖 Debug Summary:\n"
+                trace_output_content += "Debug mode completed - issues have been analyzed and fixed\n"
+                # else:
+                #     # For CLI, use the original format
+                #     trace_output_content = (
+                #         "Debug mode successfully completed, no modification needed"
+                #     )
                 observability.set_trace_output(trace_output_content)
                 print(f"🔍 Trace Output Set: {trace_output_content}")
 

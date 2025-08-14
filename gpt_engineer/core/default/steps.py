@@ -398,7 +398,7 @@ def execute_entrypoint(
             # Only set trace output if not in web UI mode - web UI handles its own trace output
             if not web_ui:
                 trace_output_content = f"{command}\nDo you want to execute this code? (Y/n)"
-                observability.set_trace_output(trace_output_content)
+                # observability.set_trace_output(trace_output_content)
                 observability.end_trace()
 
     finally:

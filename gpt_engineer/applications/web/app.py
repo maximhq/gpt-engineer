@@ -550,12 +550,14 @@ Be concise and try not to make ideal conversation points"""
         """
         output = ''
         # Add AI-generated summary
-        if ai_summary:
+        if mode == "misc":
+            output += f"Hi there, I'm the coding agent. I'm here to help you build your project.\n You can ask me to build a project, debug an existing project, or help you with your current project.\n"
+
+        elif ai_summary:
             output += f"{ai_summary}\n\n"
         
-        output += f"Files generated: {len(files_dict)}\n"
-        if files_dict and len(files_dict) > 0:
-            output += "Generated files:\n"
+        if files_dict and len(files_dict) > 0 and mode != "misc":
+            output += f"Files generated: {len(files_dict)}\n"
             for filename in files_dict.keys():
                 output += f"• {filename}\n"
         

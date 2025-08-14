@@ -1118,12 +1118,14 @@
             formatAgentResponse(result) {
                 let response = '';
                 // Add AI-generated summary
-                if (result.ai_summary) {
+                if (result.mode == "misc") {
+                    response += `Hi there, I'm the coding agent. I'm here to help you build your project.\n You can ask me to build a project, debug an existing project, or help you with your current project.\n`;
+                }
+                else if (result.ai_summary) {
                     response += `${result.ai_summary}\n\n`;
                 }
-                response += `Files generated: ${result.files_count}\n`;
-                if (result.files && Object.keys(result.files).length > 0) {
-                    response += 'Generated files:\n';
+                if (result.files && Object.keys(result.files).length > 0 && result.mode != "misc") {
+                    response += `Files generated: ${result.files_count}\n`;
                     for (const [filename, content] of Object.entries(result.files)) {
                         response += `• ${filename}\n`;
                     }
