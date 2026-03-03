@@ -14,7 +14,7 @@ import uuid
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from flask import Flask, Response, jsonify, render_template, request
 from flask_cors import CORS
@@ -579,6 +579,23 @@ Be concise and try not to make ideal conversation points"""
         """Clean up observability session when done."""
         if self.observability and self.observability.is_enabled():
             try:
+                # End any open trace before ending session
+                if hasattr(self, "current_trace_id") and self.current_trace_id:
+                    try:
+                        self.observability.end_trace(self.current_trace_id)
+                    except Exception as trace_err:
+                        logger.warning(f"Failed to end trace during cleanup: {trace_err}")
+                        try:
+                            self.observability.end_trace(self.current_trace_id)
+                        except Exception:
+                            pass
+                    finally:
+                        self.current_trace_id = None
+                        self.current_trace_mode = None
+                        self.current_trace_files = None
+                        self.current_trace_prompt = None
+                        self.current_trace_ai_summary = None
+
                 # Flush data before ending session
                 self.observability.flush_data()
 
@@ -649,34 +666,67 @@ def create_preprompts_holder(project_path: str) -> PrepromptsHolder:
 
 
 def recreate_engine_with_files(
-    session_id: str, project_path: str
+    session_id: str, 
+    project_path: str, 
+    conversation_history: Optional[List[Dict]] = None,
+    file_data: Optional[Dict[str, str]] = None
 ) -> "WebMultiTurnEngine":
     """
-    Recreate an engine and load current files from the session.
-
+    Recreate an engine and load current files from the session or use provided data.
+    
     Parameters
     ----------
     session_id : str
         The session ID.
     project_path : str
         The project path.
+    conversation_history : Optional[List[Dict]], optional
+        Conversation history to use instead of loading files. If provided,
+        file loading will be skipped and this history will be set on the engine.
+        Format: [{"prompt": str, "mode": str, "files_count": int}, ...]
+    file_data : Optional[Dict[str, str]], optional
+        File data to use directly. Keys are file paths, values are file contents.
+        If provided along with conversation_history, will be used instead of loading from session.
 
     Returns
     -------
     WebMultiTurnEngine
-        The recreated engine with current files loaded.
+        The recreated engine with current files loaded or provided data set.
     """
     ai = create_ai_instance()
     preprompts_holder = create_preprompts_holder(project_path)
     engine = WebMultiTurnEngine(ai, project_path, preprompts_holder, session_id)
 
-    # Load current files from session database
-    current_files = state_manager.session_file_repo.get_session_files(session_id)
-    if current_files:
-        engine.engine.current_files = current_files
-        logger.info(
-            f"Loaded {len(current_files)} files into recreated engine for session {session_id}"
-        )
+    if conversation_history or file_data:
+        # Use provided data instead of loading from session
+        from gpt_engineer.core.files_dict import FilesDict
+        
+        if file_data:
+            # Use provided file_data directly
+            engine.engine.current_files = FilesDict(file_data)
+            logger.info(
+                f"Set {len(file_data)} files from provided file_data on engine for session {session_id}"
+            )
+        else:
+            # No file_data provided, start with empty files
+            engine.engine.current_files = FilesDict()
+            logger.info(
+                f"Starting with empty files for session {session_id} (conversation_history provided)"
+            )
+        
+        if conversation_history:
+            engine.engine.conversation_history = conversation_history
+            logger.info(
+                f"Set conversation history ({len(conversation_history)} turns) on engine for session {session_id}"
+            )
+    else:
+        # Normal flow: Load current files from session database
+        current_files = state_manager.session_file_repo.get_session_files(session_id)
+        if current_files:
+            engine.engine.current_files = current_files
+            logger.info(
+                f"Loaded {len(current_files)} files into recreated engine for session {session_id}"
+            )
 
     return engine
 
@@ -794,6 +844,17 @@ def chat():
             ai_summary=getattr(engine, 'current_trace_ai_summary', None),
             prompt_text=prompt_text
         )
+
+        result["trace_output"] = trace_output
+
+        trace_id = result.get("trace_id")
+
+        if trace_id:
+            cli_output = state_manager.get_trace_stream_output(trace_id)
+            result["cli_output"] = cli_output
+        else:
+            result["cli_output"] = []
+
         # Log turn completion event
         if observability and observability.is_enabled():
             try:
@@ -824,6 +885,14 @@ def chat():
         # Trace is already created and managed by the database
         logger.info(f"Trace processed successfully: {result.get('trace_id')}")
 
+        # End trace for non-generate modes (improve, chat, misc) - no execution will follow
+        if trace_id:
+            try:
+                if observability and observability.is_enabled():
+                    observability.end_trace(trace_id)
+            except Exception as e:
+                logger.warning(f"Failed to end trace for non-generate mode: {e}")
+
         # Add session ID to response
         result["session_id"] = session_id
 
@@ -831,6 +900,123 @@ def chat():
 
     except Exception as e:
         logger.error(f"Error in chat endpoint: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/single-turn", methods=["POST"])
+def single_turn():
+    """
+    Handle single-turn chat requests with provided file_data and conversation_history.
+    This endpoint is for test mode and skips file loading from session.
+
+    Expected JSON payload:
+    {
+        "prompt": "user prompt text",
+        "conversation_history": "optional list of conversation history entries",
+        "file_data": "optional dict of file paths to file contents"
+    }
+
+    Returns
+    -------
+    JSON response with conversation results.
+    """
+    try:
+        data = request.get_json()
+        prompt_text = data.get("prompt", "").strip()
+        conversation_history = data.get("conversation_history")
+        file_data = data.get("file_data")
+
+        if not prompt_text:
+            return jsonify({"success": False, "error": "No prompt provided"}), 400
+
+        # Generate a temporary session ID for this single turn
+        session_id = str(uuid.uuid4())
+        project_path = f"projects/web_session_{session_id}"
+
+        logger.info(f"Processing single-turn prompt for session: {session_id}")
+
+        # Create a temporary session (won't be persisted)
+        active_session = state_manager.get_or_create_session(
+            session_id, project_path
+        )
+        state_manager.set_active_session(session_id)
+
+        # Create engine with provided conversation_history and file_data
+        active_session.engine = recreate_engine_with_files(
+            session_id, 
+            project_path, 
+            conversation_history=conversation_history,
+            file_data=file_data
+        )
+
+        engine = active_session.engine
+
+        # Process the prompt
+        result = engine.process_prompt(prompt_text)
+
+        trace_output = engine.format_trace_output(
+            mode=engine.current_trace_mode,
+            files_dict=engine.current_trace_files,
+            ai_summary=getattr(engine, 'current_trace_ai_summary', None),
+            prompt_text=prompt_text
+        )
+
+        result["trace_output"] = trace_output
+
+        # Get CLI output (stream messages) for this trace to include in response
+        trace_id = result.get("trace_id")
+        if trace_id:
+            cli_output = state_manager.get_trace_stream_output(trace_id)
+            result["cli_output"] = cli_output
+        else:
+            result["cli_output"] = []
+
+        # Log turn completion event
+        if observability and observability.is_enabled():
+            try:
+                from uuid import uuid4
+
+                observability.set_trace_output(trace_output)
+                observability.log_event(
+                    event_id=str(uuid4()),
+                    event_type="turn_completed",
+                    metadata={
+                        "turn_number": engine.turn_number,
+                        "mode": result.get("mode"),
+                        "files_generated": result.get("files_count", 0),
+                        "prompt_length": len(prompt_text),
+                        "session_id": session_id,
+                        "single_turn": True,
+                    },
+                    tags={
+                        "operation": "turn_completion",
+                        "mode": result.get("mode"),
+                        "turn_number": str(engine.turn_number),
+                        "session_id": session_id,
+                        "single_turn": "true",
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log turn completion event: {e}")
+
+        # Trace is already created and managed by the database
+        logger.info(f"Single-turn trace processed successfully: {result.get('trace_id')}")
+
+        # Single-turn has no execution - end trace immediately
+        if trace_id:
+            try:
+                if observability and observability.is_enabled():
+                    observability.end_trace(trace_id)
+            except Exception as e:
+                logger.warning(f"Failed to end single-turn trace: {e}")
+
+        # Add session ID to response
+        result["session_id"] = session_id
+
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"Error in single-turn endpoint: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -890,6 +1076,31 @@ def execute_code():
             active_session.engine.add_stream_output("Ok, not executing the code.")
             # Clear pending execution when user declines
             state_manager.clear_pending_execution(session_id)
+
+            # End trace when user declines - trace is complete even without execution
+            if (
+                hasattr(active_session.engine, "current_trace_id")
+                and active_session.engine.current_trace_id
+            ):
+                try:
+                    if observability and observability.is_enabled():
+                        trace_output = active_session.engine.format_trace_output(
+                            mode=active_session.engine.current_trace_mode,
+                            files_dict=active_session.engine.current_trace_files,
+                            ai_summary=getattr(
+                                active_session.engine, "current_trace_ai_summary", None
+                            ),
+                            prompt_text=active_session.engine.current_trace_prompt,
+                        )
+                        observability.set_trace_output(trace_output)
+                        observability.end_trace(active_session.engine.current_trace_id)
+                        active_session.engine.current_trace_id = None
+                        active_session.engine.current_trace_mode = None
+                        active_session.engine.current_trace_files = None
+                        active_session.engine.current_trace_prompt = None
+                        active_session.engine.current_trace_ai_summary = None
+                except Exception as e:
+                    logger.warning(f"Failed to end trace after user declined: {e}")
 
             # Do NOT clear the stream here; keep the previous CLI output and dialog visible
 
@@ -1350,6 +1561,47 @@ def list_sessions():
         return jsonify({"success": True, "sessions": sessions})
     except Exception as e:
         logger.error(f"Error listing sessions: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/session/end", methods=["POST"])
+def end_session():
+    """
+    End the observability session for the current/active session.
+    Call this when a script or client is done with a session to ensure
+    trace.end() and session.end() are properly called.
+
+    Expected JSON payload:
+    {
+        "session_id": "optional - if provided, only end if it matches active session"
+    }
+
+    Returns
+    -------
+    JSON response indicating success.
+    """
+    try:
+        data = request.get_json() or {}
+        session_id = data.get("session_id")
+
+        active_session = state_manager.get_active_session()
+        print(f"Active session: {active_session}")
+        if not active_session and session_id:
+            observability.end_session_sessionId(session_id)
+            return jsonify({"success": True, "message": "No active session to end"}), 200
+
+        if session_id and active_session.session_id != session_id:
+            return jsonify(
+                {"success": False, "error": f"Session {session_id} is not the active session"}
+            ), 400
+
+        if hasattr(active_session, "engine") and active_session.engine:
+            active_session.engine.cleanup()
+            logger.info(f"Ended observability session: {active_session.session_id}")
+
+        return jsonify({"success": True, "message": "Session ended"}), 200
+    except Exception as e:
+        logger.error(f"Error ending session: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
