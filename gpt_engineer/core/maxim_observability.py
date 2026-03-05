@@ -173,6 +173,37 @@ class MaximObservability:
         except Exception as e:
             self._log_exception("end_session", e)
 
+    def end_session_sessionId(self, session_id: str) -> None:
+        """
+        End the current session.
+        """
+        try:
+            if self.logger.session(session_id) is not None and self.logger.session(session_id).is_active() is True:
+                logger.debug(
+                    f"[MaximObservability] end_session_sessionId: No session or not enabled or session ID does not match"
+                )
+                self.logger.session(session_id).end()
+                logger.debug(f"[MaximObservability] Ended session: {session_id}")
+                return
+            else:
+                if not self.is_enabled() or not self.current_session:
+                    logger.debug(
+                        "[MaximObservability] end_session: No current session or not enabled"
+                    )
+                    return
+                try:
+                    self.current_session.end()
+                    self.current_session = None
+                    logger.debug("[MaximObservability] Ended session")
+                except Exception as e:
+                    self._log_exception("end_session (inner)", e)
+                    logger.debug(
+                        f"[MaximObservability] end_session_sessionId: Session {session_id} is not active"
+                    )
+                    return
+        except Exception as e:
+            self._log_exception("end_session_sessionId", e)
+
     def start_trace(
         self,
         trace_id: str,

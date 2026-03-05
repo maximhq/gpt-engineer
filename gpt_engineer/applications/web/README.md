@@ -112,6 +112,8 @@ http://localhost:5001
 The web application provides several REST API endpoints:
 
 - `POST /api/chat`: Send a prompt and get a response
+- `POST /api/execute`: Execute generated code (for generate mode)
+- `POST /api/session/end`: End the observability session (call when script/client is done)
 - `GET /api/session/<session_id>/history`: Get conversation history
 - `GET /api/session/<session_id>/files`: Get current files for a session
 - `GET /api/sessions`: List all active sessions
