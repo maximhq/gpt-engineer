@@ -356,9 +356,6 @@ class WebMultiTurnEngine:
                 f"Completed {mode} mode - generated {len(files_dict)} files", trace_id
             )
 
-            # Note: File attachments are already handled by the CLI multi-turn engine
-            # No need to duplicate file attachment logging here
-
             # Store trace info for later ending (after execution completes)
             self.current_trace_id = trace_id
             self.current_trace_mode = mode
@@ -531,7 +528,8 @@ Be concise and try not to make ideal conversation points"""
     def format_trace_output(self, mode: str, files_dict, ai_summary: str, prompt_text: str) -> str:
         """
         Format trace output similar to formatAgentResponse.
-        
+        Includes full file contents for each generated file to support evaluators.
+
         Parameters
         ----------
         mode : str
@@ -542,37 +540,20 @@ Be concise and try not to make ideal conversation points"""
             The AI-generated summary
         prompt_text : str
             The original prompt text
-            
+
         Returns
         -------
         str
             Formatted trace output
         """
         output = ''
-        # Add AI-generated summary
-        if mode == "misc":
-            output += f"Hi there, I'm the coding agent. I'm here to help you build your project.\n You can ask me to build a project, debug an existing project, or help you with your current project.\n"
 
-        elif ai_summary:
-            output += f"{ai_summary}\n\n"
-        
-        if files_dict and len(files_dict) > 0 and mode != "misc":
-            output += f"Files generated: {len(files_dict)}\n"
-            for filename in files_dict.keys():
-                output += f"• {filename}\n"
-        
-        # For generate mode, add execution prompt to trace output as well
-        if mode == "generate":
-            # Always include the confirmation question
-            output += f"\nDo you want to execute this code? (Y/n)\n"
-            # If a run script exists, include the command line too
-            if files_dict:
-                run_scripts = [
-                    f for f in files_dict.keys() if f.lower() in ["run.sh", "run.bat", "start.sh"]
-                ]
-                if run_scripts:
-                    output += f"./{run_scripts[0]}\n"
-        
+        if files_dict and len(files_dict) > 0:
+            for filename, content in files_dict.items():
+                ext = filename.rsplit('.', 1)[-1] if '.' in filename else 'txt'
+                output += f"=== {filename} ===\n"
+                output += f"```{ext}\n{content}\n```\n\n"
+
         return output
 
     def cleanup(self):
@@ -862,6 +843,7 @@ def chat():
 
 
                 observability.set_trace_output(trace_output)
+                observability.attach_files_to_trace(engine.current_trace_files)
                 observability.log_event(
                     event_id=str(uuid4()),
                     event_type="turn_completed",
@@ -977,6 +959,7 @@ def single_turn():
                 from uuid import uuid4
 
                 observability.set_trace_output(trace_output)
+                observability.attach_files_to_trace(engine.current_trace_files)
                 observability.log_event(
                     event_id=str(uuid4()),
                     event_type="turn_completed",
@@ -1093,12 +1076,8 @@ def execute_code():
                             prompt_text=active_session.engine.current_trace_prompt,
                         )
                         observability.set_trace_output(trace_output)
+                        observability.attach_files_to_trace(active_session.engine.current_trace_files)
                         observability.end_trace(active_session.engine.current_trace_id)
-                        active_session.engine.current_trace_id = None
-                        active_session.engine.current_trace_mode = None
-                        active_session.engine.current_trace_files = None
-                        active_session.engine.current_trace_prompt = None
-                        active_session.engine.current_trace_ai_summary = None
                 except Exception as e:
                     logger.warning(f"Failed to end trace after user declined: {e}")
 
@@ -1220,6 +1199,7 @@ def execute_code():
 
                             # Set trace output and end trace AFTER execution completes
                             observability.set_trace_output(trace_output)
+                            observability.attach_files_to_trace(files_dict)
                             observability.end_trace(
                                 active_session.engine.current_trace_id
                             )

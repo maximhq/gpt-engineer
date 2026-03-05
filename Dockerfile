@@ -63,4 +63,6 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 # Expose port for web UI
 EXPOSE 5001
 
+
 ENTRYPOINT ["bash", "/app/entrypoint.sh"]
+
