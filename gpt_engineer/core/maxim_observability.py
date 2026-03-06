@@ -1376,6 +1376,22 @@ class MaximObservability:
         except Exception as e:
             self._log_exception("set_trace_output", e)
 
+    def attach_files_to_trace(self, files_dict) -> None:
+        """Attach all files from a files dict to the current trace."""
+        if not files_dict or not self.is_enabled() or not self.current_trace:
+            return
+        for filename, content in files_dict.items():
+            try:
+                self.add_trace_file_attachment(
+                    filename=filename,
+                    content=content,
+                    file_type="generated",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[MaximObservability] Failed to attach file '{filename}' to trace: {e}"
+                )
+
     def add_file_attachment(
         self,
         filename: str,
