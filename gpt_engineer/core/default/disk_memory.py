@@ -31,6 +31,14 @@ from typing import Any, Dict, Iterator, Optional, Union
 from gpt_engineer.core.base_memory import BaseMemory
 from gpt_engineer.tools.supported_languages import SUPPORTED_LANGUAGES
 
+# Import observability
+try:
+    from gpt_engineer.core.maxim_observability import get_observability
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
+
 
 # This class represents a simple database that stores its tools as files in a directory.
 class DiskMemory(BaseMemory):
@@ -47,7 +55,7 @@ class DiskMemory(BaseMemory):
         The directory path where the database files are stored.
     """
 
-    def __init__(self, path: Union[str, Path]):
+    def __init__(self, path: Union[str, Path], suppress_observability: bool = False):
         """
         Initialize the DiskMemory class with a specified path.
 
@@ -55,10 +63,11 @@ class DiskMemory(BaseMemory):
         ----------
         path : str or Path
             The path to the directory where the database files will be stored.
-
+        suppress_observability : bool
+            If True, disables observability logging for this instance.
         """
         self.path: Path = Path(path).absolute()
-
+        self.suppress_observability = suppress_observability
         self.path.mkdir(parents=True, exist_ok=True)
 
     def __contains__(self, key: str) -> bool:
@@ -78,7 +87,7 @@ class DiskMemory(BaseMemory):
         """
         return (self.path / key).is_file()
 
-    def __getitem__(self, key: str) -> str:
+    def __getitem__(self, key: Union[str, Path]) -> str:
         """
         Retrieve the content of a file in the database corresponding to the given key.
         If the file is an image with a .png or .jpeg extension, it returns the content
@@ -86,7 +95,7 @@ class DiskMemory(BaseMemory):
 
         Parameters
         ----------
-        key : str
+        key : str or Path
             The key (filename) whose content is to be retrieved.
 
         Returns
@@ -99,19 +108,41 @@ class DiskMemory(BaseMemory):
         KeyError
             If the file corresponding to the key does not exist in the database.
         """
-        full_path = self.path / key
+        key = Path(key)
 
-        if not full_path.is_file():
-            raise KeyError(f"File '{key}' could not be found in '{self.path}'")
+        # Determine operation type
+        if key.suffix in {".py", ".js", ".ts", ".html", ".css"}:
+            pass
+        elif key.suffix in {".txt", ".md", ".rst"}:
+            pass
+        elif key.suffix in {".json", ".yaml", ".yml", ".toml"}:
+            pass
 
-        if full_path.suffix in [".png", ".jpeg", ".jpg"]:
-            with full_path.open("rb") as image_file:
-                encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-                mime_type = "image/png" if full_path.suffix == ".png" else "image/jpeg"
-                return f"data:{mime_type};base64,{encoded_string}"
-        else:
-            with full_path.open("r", encoding="utf-8") as f:
-                return f.read()
+        try:
+            # Handle images as binary and base64 encode
+            if key.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".bmp"}:
+                with open(self.path / key, "rb") as f:
+                    val = base64.b64encode(f.read()).decode("utf-8")
+            else:
+                with open(self.path / key, "r", encoding="utf-8") as f:
+                    val = f.read()
+
+            # Log file read operation with file content attachment if observability is available
+            if (
+                not getattr(self, "suppress_observability", False)
+                and OBSERVABILITY_AVAILABLE
+            ):
+                try:
+                    observability = get_observability()
+                    if observability.is_enabled():
+                        # Removed log_retrieval call
+                        pass
+                except Exception:
+                    pass  # Don't fail file read if observability fails
+
+            return val
+        except FileNotFoundError:
+            raise KeyError(key)
 
     def get(self, key: str, default: Optional[Any] = None) -> Any:
         """
@@ -169,7 +200,44 @@ class DiskMemory(BaseMemory):
         full_path = self.path / key
         full_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Check if file exists to determine if this is create or update
+        file_existed = full_path.exists()
+        operation_type = "file_update" if file_existed else "file_create"
+
         full_path.write_text(val, encoding="utf-8")
+
+        # Log file write operation if observability is available
+        if OBSERVABILITY_AVAILABLE:
+            try:
+                observability = get_observability()
+                if observability.is_enabled():
+                    from uuid import uuid4
+
+                    observability.log_event(
+                        event_id=str(uuid4()),
+                        event_type="file_write",
+                        metadata={
+                            "file_path": str(key),
+                            "file_size": len(val),
+                            "operation": operation_type,
+                            "full_path": str(full_path),
+                            "content_length": len(val),
+                            "file_existed": file_existed,
+                        },
+                        tags={
+                            "file_type": full_path.suffix or "no_extension",
+                            "memory_path": str(self.path),
+                            "operation": operation_type,
+                            "file_size_category": "small"
+                            if len(val) < 1000
+                            else "medium"
+                            if len(val) < 10000
+                            else "large",
+                        },
+                    )
+            except Exception:
+                # Continue without observability if it fails
+                pass
 
     def __delitem__(self, key: Union[str, Path]) -> None:
         """
@@ -234,11 +302,35 @@ class DiskMemory(BaseMemory):
             for item in self
             if Path(item).is_file() and Path(item).suffix in valid_extensions
         ]
-        return "\n".join(file_paths)
+        result = "\n".join(file_paths)
+
+        # Log file filtering query if observability is available
+        if OBSERVABILITY_AVAILABLE:
+            try:
+                observability = get_observability()
+                if observability.is_enabled():
+                    # Removed log_retrieval call
+                    pass
+            except Exception:
+                pass  # Don't fail operation if observability fails
+
+        return result
 
     def _all_files(self) -> str:
         file_paths = [str(item) for item in self if Path(item).is_file()]
-        return "\n".join(file_paths)
+        result = "\n".join(file_paths)
+
+        # Log file listing query if observability is available
+        if OBSERVABILITY_AVAILABLE:
+            try:
+                observability = get_observability()
+                if observability.is_enabled():
+                    # Removed log_retrieval call
+                    pass
+            except Exception:
+                pass  # Don't fail operation if observability fails
+
+        return result
 
     def to_path_list_string(self, supported_code_files_only: bool = False) -> str:
         """
@@ -271,7 +363,23 @@ class DiskMemory(BaseMemory):
             A dictionary with keys as filenames and values as file contents.
 
         """
-        return {file_path: self[file_path] for file_path in self}
+        file_paths = list(self)
+        result = {file_path: self[file_path] for file_path in file_paths}
+
+        # Log bulk file read query if observability is available
+        if OBSERVABILITY_AVAILABLE:
+            try:
+                observability = get_observability()
+                if observability.is_enabled():
+                    # Calculate total content size
+                    sum(len(content) for content in result.values())
+
+                    # Removed log_retrieval call
+                    pass
+            except Exception:
+                pass  # Don't fail operation if observability fails
+
+        return result
 
     def to_json(self) -> str:
         """

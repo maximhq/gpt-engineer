@@ -1,6 +1,8 @@
+import subprocess
+
 from platform import platform
 from sys import version_info
-from typing import List, Union
+from typing import List, Optional, Union
 
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 
@@ -13,6 +15,14 @@ from gpt_engineer.core.default.steps import curr_fn, improve_fn, setup_sys_promp
 from gpt_engineer.core.files_dict import FilesDict
 from gpt_engineer.core.preprompts_holder import PrepromptsHolder
 from gpt_engineer.core.prompt import Prompt
+
+# Import observability
+try:
+    from gpt_engineer.core.maxim_observability import get_observability
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
 
 # Type hint for chat messages
 Message = Union[AIMessage, HumanMessage, SystemMessage]
@@ -45,6 +55,8 @@ def self_heal(
     preprompts_holder: PrepromptsHolder = None,
     memory: BaseMemory = None,
     diff_timeout=3,
+    parent_span_id: str = None,
+    execution_timeout: Optional[int] = 30,
 ) -> FilesDict:
     """
     Attempts to execute the code from the entrypoint and if it fails, sends the error output back to the AI with instructions to fix.
@@ -57,8 +69,16 @@ def self_heal(
         The execution environment where the code is run.
     files_dict : FilesDict
         A dictionary of file names to their contents.
+    prompt : Prompt, optional
+        The original prompt that was used to generate the code.
     preprompts_holder : PrepromptsHolder, optional
         A holder for preprompt messages.
+    memory : BaseMemory, optional
+        The memory instance for logging.
+    diff_timeout : int, optional
+        Timeout for diff operations.
+    parent_span_id : str, optional
+        Parent span ID for observability tracing.
 
     Returns
     -------
@@ -80,43 +100,386 @@ def self_heal(
     this code could work with `simple_gen`, or `gen_clarified_code` as well.
     """
 
-    # step 1. execute the entrypoint
-    # log_path = dbs.workspace.path / "log.txt"
-    if ENTRYPOINT_FILE not in files_dict:
-        raise FileNotFoundError(
-            "The required entrypoint "
-            + ENTRYPOINT_FILE
-            + " does not exist in the code."
+    # Initialize observability
+    observability = None
+    validation_span_id = None
+    execution_span_id = None
+    improvement_span_id = None
+
+    if OBSERVABILITY_AVAILABLE:
+        try:
+            observability = get_observability()
+        except Exception:
+            pass  # Continue without observability
+
+    try:
+        # Start validation span
+        if observability and observability.is_enabled():
+            from uuid import uuid4
+
+            validation_span_id = str(uuid4())
+            start_span_kwargs = dict(
+                span_id=validation_span_id,
+                name="Self-Heal Validation",
+                tags={
+                    "operation": "self_heal_validation",
+                    "required_file": ENTRYPOINT_FILE,
+                    "total_files": str(len(files_dict)),
+                    "max_attempts": str(MAX_SELF_HEAL_ATTEMPTS),
+                },
+                metadata={
+                    "file_count": len(files_dict),
+                    "files_available": list(files_dict.keys()),
+                    "diff_timeout": diff_timeout,
+                },
+            )
+            if parent_span_id:
+                start_span_kwargs["parent_span_id"] = parent_span_id
+            observability.start_span(**start_span_kwargs)
+
+        # step 1. execute the entrypoint
+        # log_path = dbs.workspace.path / "log.txt"
+        if ENTRYPOINT_FILE not in files_dict:
+            error_msg = (
+                "The required entrypoint "
+                + ENTRYPOINT_FILE
+                + " does not exist in the code."
+            )
+            if observability and observability.is_enabled() and validation_span_id:
+                observability.end_span(
+                    span_id=validation_span_id, error=FileNotFoundError(error_msg)
+                )
+            raise FileNotFoundError(error_msg)
+
+        # End validation span successfully
+        if observability and observability.is_enabled() and validation_span_id:
+            observability.end_span(
+                span_id=validation_span_id,
+                result={"entrypoint_found": True, "validation_passed": True},
+            )
+
+        attempts = 0
+        if preprompts_holder is None:
+            raise AssertionError("Prepromptsholder required for self-heal")
+
+        # Start main self-heal execution span
+        if observability and observability.is_enabled():
+            execution_span_id = str(uuid4())
+            observability.start_span(
+                span_id=execution_span_id,
+                name="Self-Heal Execution Loop",
+                tags={
+                    "operation": "self_heal_execution",
+                    "max_attempts": str(MAX_SELF_HEAL_ATTEMPTS),
+                    "diff_timeout": str(diff_timeout),
+                },
+                metadata={
+                    "initial_file_count": len(files_dict),
+                    "entrypoint_content_length": len(files_dict[ENTRYPOINT_FILE]),
+                },
+            )
+
+        print(
+            f"Starting self-healing process (max {MAX_SELF_HEAL_ATTEMPTS} attempts)..."
         )
 
-    attempts = 0
-    if preprompts_holder is None:
-        raise AssertionError("Prepromptsholder required for self-heal")
-    while attempts < MAX_SELF_HEAL_ATTEMPTS:
-        attempts += 1
-        timed_out = False
+        while attempts < MAX_SELF_HEAL_ATTEMPTS:
+            attempts += 1
+            timed_out = False
 
-        # Start the process
-        execution_env.upload(files_dict)
-        p = execution_env.popen(files_dict[ENTRYPOINT_FILE])
+            print(f"Attempt {attempts}/{MAX_SELF_HEAL_ATTEMPTS}: Executing code...")
 
-        # Wait for the process to complete and get output
-        stdout_full, stderr_full = p.communicate()
+            # Start the process
+            execution_env.upload(files_dict, parent_span_id=execution_span_id)
+            p = execution_env.popen(files_dict[ENTRYPOINT_FILE])
 
-        if (p.returncode != 0 and p.returncode != 2) and not timed_out:
-            print("run.sh failed.  The log is:")
-            print(stdout_full.decode("utf-8"))
-            print(stderr_full.decode("utf-8"))
+            # Log tool call for code execution
+            tool_call_id = None
+            if observability and observability.is_enabled():
+                tool_call_id = str(uuid4())
+                observability.log_tool_call(
+                    tool_call_id=tool_call_id,
+                    name="Code Execution",
+                    description=f"Execute the entrypoint file ({ENTRYPOINT_FILE}) to test if the code runs successfully",
+                    args={
+                        "entrypoint_file": ENTRYPOINT_FILE,
+                        "attempt_number": attempts,
+                        "max_attempts": MAX_SELF_HEAL_ATTEMPTS,
+                        "files_count": len(files_dict),
+                        "entrypoint_content_length": len(files_dict[ENTRYPOINT_FILE]),
+                        "execution_timeout": execution_timeout,
+                    },
+                    tags={
+                        "operation": "code_execution",
+                        "attempt": str(attempts),
+                        "mode": "self_heal",
+                    },
+                )
 
-            new_prompt = Prompt(
-                f"A program with this specification was requested:\n{prompt}\n, but running it produced the following output:\n{stdout_full}\n and the following errors:\n{stderr_full}. Please change it so that it fulfills the requirements."
+            # Wait for the process to complete and get output
+            try:
+                stdout_full, stderr_full = p.communicate(timeout=execution_timeout)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                stdout_full, stderr_full = p.communicate()
+                timed_out = True
+                print(f"Execution timed out after {execution_timeout} seconds")
+
+            # Update tool call with result
+            if observability and observability.is_enabled() and tool_call_id:
+                success = p.returncode == 0 or p.returncode == 2
+                observability.log_tool_call(
+                    tool_call_id=tool_call_id,
+                    name="Code Execution",
+                    description=f"Execute the entrypoint file ({ENTRYPOINT_FILE}) to test if the code runs successfully",
+                    args={
+                        "entrypoint_file": ENTRYPOINT_FILE,
+                        "attempt_number": attempts,
+                        "max_attempts": MAX_SELF_HEAL_ATTEMPTS,
+                        "files_count": len(files_dict),
+                        "entrypoint_content_length": len(files_dict[ENTRYPOINT_FILE]),
+                        "execution_timeout": execution_timeout,
+                    },
+                    result={
+                        "success": success,
+                        "return_code": p.returncode,
+                        "stdout_length": len(stdout_full),
+                        "stderr_length": len(stderr_full),
+                        "stdout_preview": stdout_full.decode("utf-8")[:500]
+                        if stdout_full
+                        else "",
+                        "stderr_preview": stderr_full.decode("utf-8")[:500]
+                        if stderr_full
+                        else "",
+                        "timed_out": timed_out,
+                    },
+                    tags={
+                        "operation": "code_execution",
+                        "attempt": str(attempts),
+                        "mode": "self_heal",
+                        "success": str(success),
+                    },
+                )
+
+            # Log execution result event
+            if observability and observability.is_enabled() and execution_span_id:
+                execution_result_event_id = str(uuid4())
+                observability.log_event(
+                    event_id=execution_result_event_id,
+                    event_type="self_heal_execution_result",
+                    metadata={
+                        "attempt_number": attempts,
+                        "return_code": p.returncode,
+                        "stdout_length": len(stdout_full),
+                        "stderr_length": len(stderr_full),
+                        "timed_out": timed_out,
+                        "success": p.returncode == 0 or p.returncode == 2,
+                    },
+                    tags={
+                        "operation": "self_heal_execution_result",
+                        "attempt": str(attempts),
+                        "success": str(p.returncode == 0 or p.returncode == 2),
+                    },
+                )
+
+            if (p.returncode != 0 and p.returncode != 2) and not timed_out:
+                print(
+                    f"Attempt {attempts} failed (return code: {p.returncode}). Attempting to fix..."
+                )
+                print("Error output:")
+                print(stdout_full.decode("utf-8"))
+                print(stderr_full.decode("utf-8"))
+
+                # Log failure event
+                if observability and observability.is_enabled() and execution_span_id:
+                    failure_event_id = str(uuid4())
+                    observability.log_event(
+                        event_id=failure_event_id,
+                        event_type="self_heal_execution_failed",
+                        metadata={
+                            "attempt_number": attempts,
+                            "return_code": p.returncode,
+                            "stdout": stdout_full.decode("utf-8"),
+                            "stderr": stderr_full.decode("utf-8"),
+                            "remaining_attempts": MAX_SELF_HEAL_ATTEMPTS - attempts,
+                        },
+                        tags={
+                            "operation": "self_heal_failure",
+                            "attempt": str(attempts),
+                            "return_code": str(p.returncode),
+                        },
+                    )
+
+                # Start improvement span
+                if observability and observability.is_enabled():
+                    improvement_span_id = str(uuid4())
+                    observability.start_span(
+                        parent_span_id=execution_span_id,
+                        span_id=improvement_span_id,
+                        name="Self-Heal Code Improvement",
+                        tags={
+                            "operation": "self_heal_improvement",
+                            "attempt": str(attempts),
+                            "model": ai.model_name
+                            if hasattr(ai, "model_name")
+                            else "unknown",
+                            "diff_timeout": str(diff_timeout),
+                        },
+                        metadata={
+                            "attempt_number": attempts,
+                            "return_code": p.returncode,
+                            "stdout_length": len(stdout_full),
+                            "stderr_length": len(stderr_full),
+                            "files_before_count": len(files_dict),
+                        },
+                    )
+
+                # Log improvement start event
+                if observability and observability.is_enabled() and improvement_span_id:
+                    improvement_start_event_id = str(uuid4())
+                    observability.log_event(
+                        event_id=improvement_start_event_id,
+                        event_type="self_heal_improvement_started",
+                        metadata={
+                            "attempt_number": attempts,
+                            "error_output": stderr_full.decode("utf-8"),
+                            "stdout_output": stdout_full.decode("utf-8"),
+                        },
+                        tags={
+                            "operation": "self_heal_improvement",
+                            "attempt": str(attempts),
+                            "phase": "started",
+                        },
+                    )
+
+                new_prompt = Prompt(
+                    f"A program with this specification was requested:\n{prompt}\n, but running it produced the following output:\n{stdout_full}\n and the following errors:\n{stderr_full}. Please change it so that it fulfills the requirements."
+                )
+
+                files_dict_before = files_dict.copy()
+
+                # Set the AI step name for proper LLM call tracking in self-heal mode
+                if hasattr(ai, "set_current_step"):
+                    ai.set_current_step(f"self_heal_improvement_attempt_{attempts}")
+
+                print(f"Attempt {attempts}: Requesting AI to fix the code...")
+                files_dict = improve_fn(
+                    ai, new_prompt, files_dict, memory, preprompts_holder, diff_timeout
+                )
+
+                # Log improvement completion event
+                if observability and observability.is_enabled() and improvement_span_id:
+                    improvement_complete_event_id = str(uuid4())
+                    observability.log_event(
+                        event_id=improvement_complete_event_id,
+                        event_type="self_heal_improvement_completed",
+                        metadata={
+                            "attempt_number": attempts,
+                            "files_before_count": len(files_dict_before),
+                            "files_after_count": len(files_dict),
+                            "changes_made": files_dict != files_dict_before,
+                        },
+                        tags={
+                            "operation": "self_heal_improvement",
+                            "attempt": str(attempts),
+                            "phase": "completed",
+                            "changes_made": str(files_dict != files_dict_before),
+                        },
+                    )
+
+                # End improvement span
+                if observability and observability.is_enabled() and improvement_span_id:
+                    observability.end_span(
+                        span_id=improvement_span_id,
+                        result={
+                            "improvement_completed": True,
+                            "files_after_count": len(files_dict),
+                            "changes_made": files_dict != files_dict_before,
+                        },
+                    )
+
+            else:
+                print(f"Success! Code executed successfully on attempt {attempts}.")
+
+                # Log success event
+                if observability and observability.is_enabled() and execution_span_id:
+                    success_event_id = str(uuid4())
+                    observability.log_event(
+                        event_id=success_event_id,
+                        event_type="self_heal_execution_succeeded",
+                        metadata={
+                            "attempt_number": attempts,
+                            "return_code": p.returncode,
+                            "stdout_length": len(stdout_full),
+                            "stderr_length": len(stderr_full),
+                            "total_attempts_needed": attempts,
+                        },
+                        tags={
+                            "operation": "self_heal_success",
+                            "attempt": str(attempts),
+                            "return_code": str(p.returncode),
+                        },
+                    )
+
+                break
+
+        # End execution span
+        if observability and observability.is_enabled() and execution_span_id:
+            observability.end_span(
+                span_id=execution_span_id,
+                result={
+                    "total_attempts": attempts,
+                    "final_file_count": len(files_dict),
+                    "execution_successful": attempts < MAX_SELF_HEAL_ATTEMPTS,
+                    "max_attempts_reached": attempts >= MAX_SELF_HEAL_ATTEMPTS,
+                },
             )
-            files_dict = improve_fn(
-                ai, new_prompt, files_dict, memory, preprompts_holder, diff_timeout
-            )
+
+        # Print final summary
+        if attempts >= MAX_SELF_HEAL_ATTEMPTS:
+            print(f"Self-healing failed after {MAX_SELF_HEAL_ATTEMPTS} attempts.")
         else:
-            break
-    return files_dict
+            print(f"Self-healing completed successfully in {attempts} attempt(s).")
+
+        # Log self-heal summary event
+        if observability and observability.is_enabled():
+            from uuid import uuid4
+
+            summary_event_id = str(uuid4())
+            observability.log_event(
+                event_id=summary_event_id,
+                event_type="self_heal_process_summary",
+                metadata={
+                    "total_attempts": attempts,
+                    "execution_successful": attempts < MAX_SELF_HEAL_ATTEMPTS,
+                    "max_attempts_reached": attempts >= MAX_SELF_HEAL_ATTEMPTS,
+                    "final_file_count": len(files_dict),
+                    "llm_calls_made": attempts
+                    if attempts < MAX_SELF_HEAL_ATTEMPTS
+                    else MAX_SELF_HEAL_ATTEMPTS,
+                    "improvements_applied": attempts - 1
+                    if attempts > 1 and attempts < MAX_SELF_HEAL_ATTEMPTS
+                    else 0,
+                },
+                tags={
+                    "operation": "self_heal_summary",
+                    "execution_successful": str(attempts < MAX_SELF_HEAL_ATTEMPTS),
+                    "total_attempts": str(attempts),
+                },
+            )
+
+        return files_dict
+
+    except Exception as e:
+        # End any active spans with error
+        if observability and observability.is_enabled():
+            if validation_span_id:
+                observability.end_span(span_id=validation_span_id, error=e)
+            if execution_span_id:
+                observability.end_span(span_id=execution_span_id, error=e)
+            if improvement_span_id:
+                observability.end_span(span_id=improvement_span_id, error=e)
+        raise
 
 
 def clarified_gen(

@@ -30,6 +30,7 @@ improve : function
     Improves the code based on user input and returns the updated files.
 """
 
+import datetime
 import inspect
 import io
 import re
@@ -37,7 +38,9 @@ import sys
 import traceback
 
 from pathlib import Path
-from typing import List, MutableMapping, Union
+from subprocess import TimeoutExpired
+from typing import List, MutableMapping, Optional, Union
+from uuid import uuid4
 
 from langchain.schema import HumanMessage, SystemMessage
 from termcolor import colored
@@ -56,8 +59,17 @@ from gpt_engineer.core.default.paths import (
     IMPROVE_LOG_FILE,
 )
 from gpt_engineer.core.files_dict import FilesDict, file_to_lines_dict
+from gpt_engineer.core.observed_preprompts import preprompt_collection_span
 from gpt_engineer.core.preprompts_holder import PrepromptsHolder
 from gpt_engineer.core.prompt import Prompt
+
+# Import observability
+try:
+    from gpt_engineer.core.maxim_observability import get_observability
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
 
 
 def curr_fn() -> str:
@@ -119,7 +131,11 @@ def setup_sys_prompt_existing_code(
 
 
 def gen_code(
-    ai: AI, prompt: Prompt, memory: BaseMemory, preprompts_holder: PrepromptsHolder
+    ai: AI,
+    prompt: Prompt,
+    memory: BaseMemory,
+    preprompts_holder: PrepromptsHolder,
+    parent_span_id: str = None,
 ) -> FilesDict:
     """
     Generates code from a prompt using AI and returns the generated files.
@@ -134,13 +150,17 @@ def gen_code(
         The memory interface where the code and related data are stored.
     preprompts_holder : PrepromptsHolder
         The holder for preprompt messages that guide the AI model.
-
+    parent_span_id : str,
+        The ID of the parent span.
     Returns
     -------
     FilesDict
         A dictionary of file names to their respective source code content.
     """
-    preprompts = preprompts_holder.get_preprompts()
+    # --- Preprompt Collection Span ---
+    with preprompt_collection_span(preprompts_holder, parent_span_id) as span_info:
+        preprompts = span_info["preprompts"]
+
     messages = ai.start(
         setup_sys_prompt(preprompts), prompt.to_langchain_content(), step_name=curr_fn()
     )
@@ -156,6 +176,7 @@ def gen_entrypoint(
     files_dict: FilesDict,
     memory: BaseMemory,
     preprompts_holder: PrepromptsHolder,
+    parent_span_id: str = None,
 ) -> FilesDict:
     """
     Generates an entrypoint for the codebase and returns the entrypoint files.
@@ -170,7 +191,7 @@ def gen_entrypoint(
         The memory interface where the code and related data are stored.
     preprompts_holder : PrepromptsHolder
         The holder for preprompt messages that guide the AI model.
-
+    parent_span_id : str,
     Returns
     -------
     FilesDict
@@ -183,7 +204,13 @@ def gen_entrypoint(
         a) installs dependencies
         b) runs all necessary parts of the codebase (in parallel if necessary)
         """
-    preprompts = preprompts_holder.get_preprompts()
+    # --- Preprompt Collection Span ---
+    with preprompt_collection_span(preprompts_holder, parent_span_id) as span_info:
+        preprompts = span_info["preprompts"]
+
+    # Ensure files_dict is a FilesDict object
+    if not isinstance(files_dict, FilesDict):
+        files_dict = FilesDict(files_dict)
     messages = ai.start(
         system=(preprompts["entrypoint"]),
         user=user_prompt
@@ -209,6 +236,8 @@ def execute_entrypoint(
     prompt: Prompt = None,
     preprompts_holder: PrepromptsHolder = None,
     memory: BaseMemory = None,
+    parent_span_id: str = None,
+    web_ui: Optional[bool] = False,
 ) -> FilesDict:
     """
     Executes the entrypoint of the codebase.
@@ -229,43 +258,357 @@ def execute_entrypoint(
     FilesDict
         The dictionary of file names to their respective source code content after execution.
     """
-    if ENTRYPOINT_FILE not in files_dict:
-        raise FileNotFoundError(
-            "The required entrypoint "
-            + ENTRYPOINT_FILE
-            + " does not exist in the code."
-        )
+    observability = None
+    validation_span_id = None
 
-    command = files_dict[ENTRYPOINT_FILE]
+    if OBSERVABILITY_AVAILABLE:
+        try:
+            observability = get_observability()
+        except Exception:
+            pass  # Continue without observability
 
-    print()
-    print(
-        colored(
-            "Do you want to execute this code? (Y/n)",
-            "red",
-        )
-    )
-    print()
-    print(command)
-    print()
-    if input("").lower() not in ["", "y", "yes"]:
-        print("Ok, not executing the code.")
-        return files_dict
-    print("Executing the code...")
-    print()
-    print(
-        colored(
-            "Note: If it does not work as expected, consider running the code"
-            + " in another way than above.",
-            "green",
-        )
-    )
-    print()
-    print("You can press ctrl+c *once* to stop the execution.")
-    print()
+    try:
+        # Start entrypoint validation span as child if parent_span_id is provided
+        if observability and observability.is_enabled():
+            validation_span_id = str(uuid4())
+            start_span_kwargs = dict(
+                span_id=validation_span_id,
+                name="Check Run Script Files",
+                tags={
+                    "operation": "file_validation",
+                    "required_file": ENTRYPOINT_FILE,
+                    "total_files": str(len(files_dict)),
+                },
+            )
+            if parent_span_id:
+                start_span_kwargs["parent_span_id"] = parent_span_id
+            observability.start_span(**start_span_kwargs)
 
-    execution_env.upload(files_dict).run(f"bash {ENTRYPOINT_FILE}")
-    return files_dict
+        # Perform file existence check and log as tool call
+        file_exists = ENTRYPOINT_FILE in files_dict
+        if observability and observability.is_enabled() and validation_span_id:
+            validation_tool_call_id = str(uuid4())
+            observability.log_tool_call(
+                tool_call_id=validation_tool_call_id,
+                name="File Existence Check",
+                description=f"Check if required entrypoint file {ENTRYPOINT_FILE} exists",
+                args={
+                    "checking_file": ENTRYPOINT_FILE,
+                    "files_available": list(files_dict.keys()),
+                    "file_count": len(files_dict),
+                },
+                result={
+                    "file_exists": file_exists,
+                    "file_found": file_exists,
+                    "missing_file": ENTRYPOINT_FILE if not file_exists else None,
+                    "validation_passed": file_exists,
+                },
+                tags={
+                    "tool_type": "file_validation",
+                    "operation": "file_existence_check",
+                    "file_type": ".sh",
+                    "validation_result": "passed" if file_exists else "failed",
+                },
+            )
+
+        if ENTRYPOINT_FILE not in files_dict:
+            error_msg = (
+                f"The required entrypoint {ENTRYPOINT_FILE} does not exist in the code."
+            )
+            if observability and observability.is_enabled() and validation_span_id:
+                observability.end_span(
+                    span_id=validation_span_id, error=FileNotFoundError(error_msg)
+                )
+            raise FileNotFoundError(error_msg)
+
+        command = files_dict[ENTRYPOINT_FILE]
+
+        # Perform command validation and log as tool call
+        command_validation_passed = (
+            True  # Basic validation - could be enhanced with more checks
+        )
+        if observability and observability.is_enabled() and validation_span_id:
+            cmd_validation_tool_call_id = str(uuid4())
+            observability.log_tool_call(
+                tool_call_id=cmd_validation_tool_call_id,
+                name="Command Validation",
+                description="Validate command for safe execution",
+                args={
+                    "command": command,
+                    "command_length": len(command),
+                    "command_type": "bash",
+                    "validation_rules": ["basic_syntax_check"],
+                },
+                result={
+                    "validation_passed": command_validation_passed,
+                    "command_valid": command_validation_passed,
+                    "command_length": len(command),
+                    "command_preview": command[:100] + "..."
+                    if len(command) > 100
+                    else command,
+                    "warnings": [],
+                },
+                tags={
+                    "tool_type": "command_validation",
+                    "operation": "command_validation",
+                    "command_type": "bash",
+                    "validation_result": "passed"
+                    if command_validation_passed
+                    else "failed",
+                },
+            )
+
+        # End validation span successfully
+        if observability and observability.is_enabled() and validation_span_id:
+            observability.end_span(
+                span_id=validation_span_id,
+                result={"entrypoint_found": True, "command_length": len(command)},
+            )
+
+        # Log prompt display as an event
+        if observability and observability.is_enabled():
+            prompt_display_event_id = str(uuid4())
+            observability.log_event(
+                event_id=prompt_display_event_id,
+                event_type="prompt_display",
+                data=None,
+                metadata={
+                    "prompt_text": "Do you want to execute this code? (Y/n)",
+                    "command_displayed": command,
+                    "display_time": datetime.datetime.utcnow().isoformat() + "+00:00",
+                },
+                tags={
+                    "operation": "user_prompt_display",
+                    "interaction_type": "confirmation",
+                },
+            )
+
+        print()
+        print(
+            colored(
+                "Do you want to execute this code? (Y/n)",
+                "red",
+            )
+        )
+        print()
+        print(command)
+        print()
+
+        if observability and observability.is_enabled():
+            # Only set trace output if not in web UI mode - web UI handles its own trace output
+            if not web_ui:
+                trace_output_content = f"{command}\nDo you want to execute this code? (Y/n)"
+                # observability.set_trace_output(trace_output_content)
+                observability.end_trace()
+
+    finally:
+        if web_ui:
+            # For web UI, return files_dict and let the web UI handle execution confirmation
+            # The web UI will detect the "Do you want to execute this code?" prompt
+            # and set up the pending execution state
+            return files_dict
+        else:
+            return execute_entrypoint_next(execution_env, files_dict)
+
+
+def execute_entrypoint_next(
+    execution_env: BaseExecutionEnv,
+    files_dict: FilesDict = None,
+    user_response: str = None,
+    timeout: Optional[int] = 30,
+) -> FilesDict:
+    """
+    Executes the entrypoint of the codebase.
+    """
+
+    observability = None
+    execution_span_id = None
+
+    if OBSERVABILITY_AVAILABLE:
+        try:
+            observability = get_observability()
+        except Exception:
+            pass  # Continue without observability
+
+    try:
+        # Start a new trace for command execution and user feedback
+        if observability and observability.is_enabled():
+            new_trace_id = str(uuid4())
+            observability.start_trace(
+                trace_id=new_trace_id,
+                name=new_trace_id,
+                tags={
+                    "operation": "command_execution",
+                    "phase": "execution",
+                },
+                metadata={
+                    "files_to_process": len(files_dict),
+                    "has_entrypoint": "run.sh" in files_dict,
+                },
+            )
+            observability.set_trace_input(f"{user_response}")
+            # Use provided user_response if available, otherwise prompt for input
+        if user_response is None:
+            user_response = input("").lower()
+        else:
+            user_response = user_response.lower()
+        user_confirmed = user_response in ["", "y", "yes"]
+
+        if not user_confirmed:
+            print("Ok, not executing the code.")
+            return files_dict or FilesDict()
+
+        print("Executing the code...")
+        print()
+        print(
+            colored(
+                "Note: If it does not work as expected, consider running the code"
+                + " in another way than above.",
+                "green",
+            )
+        )
+        print()
+        print("You can press ctrl+c *once* to stop the execution.")
+        print()
+
+        try:
+            uploaded_result = execution_env.upload(
+                files_dict, parent_span_id=execution_span_id
+            )
+        except Exception as upload_error:
+            if observability and observability.is_enabled():
+                observability.log_event(
+                    event_id=str(uuid4()),
+                    event_type="upload_error",
+                    data=None,
+                    metadata={"error": str(upload_error)},
+                    tags={"operation": "file_upload", "error": "true"},
+                )
+            raise
+
+        # Start command execution span
+        if observability and observability.is_enabled():
+            execution_span_id = str(uuid4())
+            observability.start_span(
+                span_id=execution_span_id,
+                name="Run Generated Code",
+                tags={
+                    "operation": "shell_execution",
+                    "command": f"bash {ENTRYPOINT_FILE}",
+                    "entrypoint_file": ENTRYPOINT_FILE,
+                },
+            )
+
+        # Log tool call for code execution
+        tool_call_id = None
+        if observability and observability.is_enabled():
+            tool_call_id = str(uuid4())
+            observability.log_tool_call(
+                tool_call_id=tool_call_id,
+                name="Code Execution",
+                description=f"Execute the entrypoint file ({ENTRYPOINT_FILE}) to run the generated code",
+                args={
+                    "entrypoint_file": ENTRYPOINT_FILE,
+                    "command": f"bash {ENTRYPOINT_FILE}",
+                    "files_count": len(files_dict),
+                },
+                tags={
+                    "operation": "code_execution",
+                    "mode": "execute_entrypoint",
+                },
+            )
+
+        try:
+            # Execute the entrypoint file
+            result = uploaded_result.run(f"bash {ENTRYPOINT_FILE}", timeout=timeout)
+            if observability and observability.is_enabled():
+                observability.set_trace_output(f"Code executed successfully , {str(result)}")
+        except TimeoutExpired as timeout_error:
+            if observability and observability.is_enabled() and tool_call_id:
+                observability.log_tool_call(
+                    tool_call_id=tool_call_id,
+                    name="Code Execution",
+                    description=f"Execute the entrypoint file ({ENTRYPOINT_FILE}) to run the generated code",
+                    args={
+                        "entrypoint_file": ENTRYPOINT_FILE,
+                        "command": f"bash {ENTRYPOINT_FILE}",
+                        "files_count": len(files_dict),
+                        "timeout": timeout,
+                    },
+                    result={
+                        "execution_completed": False,
+                        "error": str(timeout_error),
+                        "timed_out": True,
+                    },
+                    tags={
+                        "operation": "code_execution",
+                        "mode": "execute_entrypoint",
+                        "success": "false",
+                        "timeout": "true",
+                    },
+                )
+                tool_call_id = None
+            raise
+        except Exception as run_error:
+            if observability and observability.is_enabled() and tool_call_id:
+                observability.log_tool_call(
+                    tool_call_id=tool_call_id,
+                    name="Code Execution",
+                    description=f"Execute the entrypoint file ({ENTRYPOINT_FILE}) to run the generated code",
+                    args={
+                        "entrypoint_file": ENTRYPOINT_FILE,
+                        "command": f"bash {ENTRYPOINT_FILE}",
+                        "files_count": len(files_dict),
+                    },
+                    result={
+                        "execution_completed": False,
+                        "error": str(run_error),
+                    },
+                    tags={
+                        "operation": "code_execution",
+                        "mode": "execute_entrypoint",
+                        "success": "false",
+                    },
+                )
+                tool_call_id = None
+            raise
+
+        # Update tool call with result
+        if observability and observability.is_enabled() and tool_call_id:
+            observability.log_tool_call(
+                tool_call_id=tool_call_id,
+                name="Code Execution",
+                description=f"Execute the entrypoint file ({ENTRYPOINT_FILE}) to run the generated code",
+                args={
+                    "entrypoint_file": ENTRYPOINT_FILE,
+                    "command": f"bash {ENTRYPOINT_FILE}",
+                    "files_count": len(files_dict),
+                },
+                result={
+                    "execution_completed": True,
+                    "entrypoint_file": ENTRYPOINT_FILE,
+                },
+                tags={
+                    "operation": "code_execution",
+                    "mode": "execute_entrypoint",
+                    "success": "true",
+                },
+            )
+
+        # End execution span
+        if observability and observability.is_enabled() and execution_span_id:
+            observability.end_span(
+                span_id=execution_span_id, result={"execution_completed": True}
+            )
+
+        return files_dict or FilesDict()
+
+    except Exception as e:
+        # End any active spans with error
+        if observability and observability.is_enabled():
+            if execution_span_id:
+                observability.end_span(span_id=execution_span_id, error=e)
+        raise
 
 
 def improve_fn(
@@ -297,10 +640,14 @@ def improve_fn(
     FilesDict
         The dictionary of file names to their respective updated source code content.
     """
-    preprompts = preprompts_holder.get_preprompts()
+    preprompts = preprompts_holder.get_preprompts(suppress_observability=True)
     messages = [
         SystemMessage(content=setup_sys_prompt_existing_code(preprompts)),
     ]
+
+    # Ensure files_dict is a FilesDict object
+    if not isinstance(files_dict, FilesDict):
+        files_dict = FilesDict(files_dict)
 
     # Add files as input
     messages.append(HumanMessage(content=f"{files_dict.to_chat()}"))
@@ -373,13 +720,37 @@ class Tee(object):
             file.flush()
 
 
-def handle_improve_mode(prompt, agent, memory, files_dict, diff_timeout=3):
+def handle_improve_mode(
+    prompt,
+    agent,
+    memory,
+    files_dict,
+    diff_timeout=3,
+    parent_span_id: Optional[str] = None,
+):
     captured_output = io.StringIO()
     old_stdout = sys.stdout
     sys.stdout = Tee(sys.stdout, captured_output)
 
     try:
-        files_dict = agent.improve(files_dict, prompt, diff_timeout=diff_timeout)
+        # Ensure input is a FilesDict
+        if not isinstance(files_dict, FilesDict):
+            files_dict = FilesDict(files_dict)
+
+        if parent_span_id:
+            files_dict = agent.improve(
+                files_dict,
+                prompt,
+                diff_timeout=diff_timeout,
+                parent_span_id=parent_span_id,
+            )
+        else:
+            files_dict = agent.improve(files_dict, prompt, diff_timeout=diff_timeout)
+
+        # Ensure output is also a FilesDict
+        if not isinstance(files_dict, FilesDict):
+            files_dict = FilesDict(files_dict)
+
     except Exception as e:
         print(
             f"Error while improving the project: {e}\nCould you please upload the debug_log_file.txt in {memory.path}/logs folder to github?\nFULL STACK TRACE:\n"

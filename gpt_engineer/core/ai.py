@@ -46,6 +46,14 @@ Message = Union[AIMessage, HumanMessage, SystemMessage]
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# Import observability after other imports
+try:
+    from gpt_engineer.core.maxim_observability import get_observability
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
+
 
 class AI:
     """
@@ -83,6 +91,8 @@ class AI:
         Deserialize a JSON string to a list of messages.
     _create_chat_model() -> BaseChatModel
         Create a chat model with the specified model name and temperature.
+    set_current_step(step_name: str) -> None
+        Set the current step name for observability tracking.
     """
 
     def __init__(
@@ -115,7 +125,20 @@ class AI:
         self.llm = self._create_chat_model()
         self.token_usage_log = TokenUsageLog(model_name)
 
+        # Initialize observability
+        self.observability = None
+        self._current_step = None
+        if OBSERVABILITY_AVAILABLE:
+            try:
+                self.observability = get_observability()
+            except Exception as e:
+                logger.warning(f"Failed to get observability instance: {e}")
+
         logger.debug(f"Using model {self.model_name}")
+
+    def set_current_step(self, step_name: str) -> None:
+        """Set the current step name for observability tracking."""
+        self._current_step = step_name
 
     def start(self, system: str, user: Any, *, step_name: str) -> List[Message]:
         """
@@ -135,6 +158,7 @@ class AI:
         List[Message]
             The list of messages in the conversation.
         """
+        self.set_current_step(step_name)
 
         messages: List[Message] = [
             SystemMessage(content=system),
@@ -228,6 +252,7 @@ class AI:
         List[Message]
             The updated list of messages in the conversation.
         """
+        self.set_current_step(step_name)
 
         if prompt:
             messages.append(HumanMessage(content=prompt))
@@ -284,7 +309,134 @@ class AI:
         >>> messages = [SystemMessage(content="Hello"), HumanMessage(content="How's the weather?")]
         >>> response = backoff_inference(messages)
         """
-        return self.llm.invoke(messages)  # type: ignore
+        generation_id = None
+
+        # Start generation logging if observability is available
+        if self.observability and self.observability.is_enabled():
+            try:
+                from uuid import uuid4
+
+                generation_id = str(uuid4())
+
+                # Convert messages to dict format for logging
+                messages_dict = []
+                for msg in messages:
+                    if hasattr(msg, "content"):
+                        if isinstance(msg, SystemMessage):
+                            role = "system"
+                        elif isinstance(msg, HumanMessage):
+                            role = "user"
+                        elif isinstance(msg, AIMessage):
+                            role = "assistant"
+                        else:
+                            role = "unknown"
+
+                        # Handle both string and list content
+                        content = msg.content
+                        if isinstance(content, list):
+                            # Extract text from content list for vision models
+                            text_content = ""
+                            for item in content:
+                                if (
+                                    isinstance(item, dict)
+                                    and item.get("type") == "text"
+                                ):
+                                    text_content += item.get("text", "")
+                            content = text_content
+
+                        messages_dict.append({"role": role, "content": str(content)})
+
+                # We'll log the generation after we get the response to include everything
+                pass
+            except Exception as e:
+                logger.error(f"Failed to start generation logging: {e}")
+
+        try:
+            response = self.llm.invoke(messages)  # type: ignore
+
+            # Log generation with response if observability is available
+            if self.observability and self.observability.is_enabled() and generation_id:
+                try:
+                    # Calculate token usage directly using the tokenizer
+                    token_usage_entry = None
+                    try:
+                        prompt_tokens = (
+                            self.token_usage_log._tokenizer.num_tokens_from_messages(
+                                messages
+                            )
+                        )
+                        completion_tokens = self.token_usage_log._tokenizer.num_tokens(
+                            str(response.content)
+                        )
+                        total_tokens = prompt_tokens + completion_tokens
+
+                        token_usage_entry = {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": total_tokens,
+                        }
+                    except Exception as token_error:
+                        logger.debug(f"Failed to calculate token usage: {token_error}")
+                        # Fallback to trying from existing log
+                        if self.token_usage_log.log():
+                            latest_usage = self.token_usage_log.log()[-1]
+                            token_usage_entry = {
+                                "prompt_tokens": latest_usage.in_step_prompt_tokens,
+                                "completion_tokens": latest_usage.in_step_completion_tokens,
+                                "total_tokens": latest_usage.in_step_total_tokens,
+                            }
+
+                    # Log complete generation with the raw response object
+                    self.observability.log_generation(
+                        generation_id=generation_id,
+                        name=f"LLM Call - {self._current_step or 'unknown'}",
+                        model=self.model_name,
+                        messages=messages_dict,
+                        response=str(response.content),
+                        model_params={
+                            "temperature": self.temperature,
+                            "streaming": self.streaming,
+                            "vision": self.vision,
+                        },
+                        tags={
+                            "model": self.model_name,
+                            "step": self._current_step or "unknown",
+                            "temperature": str(self.temperature),
+                            "streaming": str(self.streaming),
+                            "vision": str(self.vision),
+                            "message_count": str(len(messages)),
+                            "response_length": str(len(str(response.content))),
+                        },
+                        token_usage=token_usage_entry,
+                        raw_response=response,  # Pass the actual LangChain response object
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to log generation response: {e}")
+
+            return response
+
+        except Exception as e:
+            # Log error if observability is available
+            if self.observability and self.observability.is_enabled():
+                try:
+                    self.observability.log_error(
+                        error=e,
+                        context={
+                            "generation_id": generation_id,
+                            "model": self.model_name,
+                            "step": self._current_step or "unknown",
+                            "message_count": len(messages),
+                        },
+                        tags={
+                            "error_type": "llm_error",
+                            "model": self.model_name,
+                            "step": self._current_step or "unknown",
+                        },
+                    )
+                except Exception as log_error:
+                    logger.error(f"Failed to log error: {log_error}")
+
+            raise
 
     @staticmethod
     def serialize_messages(messages: List[Message]) -> str:

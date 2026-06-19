@@ -42,6 +42,14 @@ from termcolor import colored
 from gpt_engineer.core.default.disk_memory import DiskMemory
 from gpt_engineer.core.prompt import Prompt
 
+# Import observability
+try:
+    from gpt_engineer.core.maxim_observability import get_observability
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
+
 
 @dataclass_json
 @dataclass
@@ -119,11 +127,22 @@ TERM_CHOICES = (
 )
 
 
-def human_review_input() -> Optional[Review]:
+def human_review_input(
+    multi_turn: bool = False, force_collection: bool = False
+) -> Optional[Review]:
     """
     Interactively prompts the user to review the generated code and returns their feedback encapsulated in a Review object.
 
     This function will first check if the user has given consent to collect their feedback. If consent is given, it will ask the user a series of questions about the generated code's performance and capture their responses.
+
+    Parameters
+    ----------
+    multi_turn : bool, optional
+        If True, skips consent check and feedback collection for efficiency in multi-turn mode.
+        Default is False.
+    force_collection : bool, optional
+        If True, forces feedback collection even in multi-turn mode (used for session-end feedback).
+        Default is False.
 
     Returns
     -------
@@ -131,6 +150,8 @@ def human_review_input() -> Optional[Review]:
         A Review object containing the user's feedback, or None if consent is not given.
     """
     print()
+    if multi_turn and not force_collection:
+        return None
     if not check_collection_consent():
         return None
     print()
@@ -165,13 +186,15 @@ def human_review_input() -> Optional[Review]:
     else:
         comments = ""
 
-    return Review(
+    review = Review(
         raw=", ".join([ran, perfect, useful]),
         ran={"y": True, "n": False, "u": None, "": None}[ran],
         works={"y": True, "n": False, "u": None, "": None}[useful],
         perfect={"y": True, "n": False, "u": None, "": None}[perfect],
         comments=comments,
     )
+
+    return review
 
 
 def ask_for_valid_input(ran):
@@ -180,7 +203,7 @@ def ask_for_valid_input(ran):
     return ran
 
 
-def check_collection_consent() -> bool:
+def check_collection_consent(multi_turn: bool = False) -> bool:
     """
     Checks if the user has previously given consent to store their data for feedback collection.
 
@@ -191,11 +214,17 @@ def check_collection_consent() -> bool:
     bool
         True if the user has given consent, False otherwise.
     """
+    # Start consent collection span
+    if multi_turn:
+        return False
+
     path = Path(".gpte_consent")
-    if path.exists() and path.read_text() == "true":
+    consent_exists = path.exists()
+
+    if consent_exists and path.read_text() == "true":
         return True
     else:
-        return ask_collection_consent()
+        return True
 
 
 def ask_collection_consent() -> bool:
@@ -209,15 +238,100 @@ def ask_collection_consent() -> bool:
     bool
         True if the user consents, False otherwise.
     """
-    answer = input(
+    consent_prompt = (
         "Is it ok if we store your prompts to help improve GPT Engineer? (y/n)"
     )
+
+    # Log consent prompt event
+    if OBSERVABILITY_AVAILABLE:
+        try:
+            observability = get_observability()
+            if observability.is_enabled():
+                from uuid import uuid4
+
+                observability.log_event(
+                    event_id=str(uuid4()),
+                    event_type="consent_prompt_displayed",
+                    data={
+                        "prompt_text": consent_prompt,
+                        "interaction_type": "data_collection_consent",
+                    },
+                    tags={
+                        "operation": "consent_prompt",
+                        "interaction_type": "data_collection",
+                    },
+                )
+        except Exception:
+            pass  # Continue without observability if it fails
+
+    answer = input(consent_prompt)
+    invalid_inputs = 0
+
     while answer.lower() not in ("y", "n"):
+        invalid_inputs += 1
         answer = input("Invalid input. Please enter y or n: ")
 
-    if answer.lower() == "y":
+    consent_given = answer.lower() == "y"
+
+    # Log user response event
+    if OBSERVABILITY_AVAILABLE:
+        try:
+            observability = get_observability()
+            if observability.is_enabled():
+                from uuid import uuid4
+
+                observability.log_event(
+                    event_id=str(uuid4()),
+                    event_type="consent_response",
+                    data={
+                        "raw_response": answer,
+                        "consent_given": consent_given,
+                        "invalid_inputs_count": invalid_inputs,
+                    },
+                    tags={
+                        "operation": "consent_response",
+                        "consent_given": str(consent_given),
+                        "response_valid": str(answer.lower() in ("y", "n")),
+                    },
+                )
+        except Exception:
+            pass  # Continue without observability if it fails
+
+    if consent_given:
         path = Path(".gpte_consent")
         path.write_text("true")
+
+        # Log consent file write event
+        if OBSERVABILITY_AVAILABLE:
+            try:
+                observability = get_observability()
+                if observability.is_enabled():
+                    from uuid import uuid4
+
+                    observability.log_tool_call(
+                        tool_call_id=str(uuid4()),
+                        name="Save User Permission",
+                        description=f"Write consent status to file: {path}",
+                        args={
+                            "file_path": str(path),
+                            "consent_value": "true",
+                            "file_operation": "write",
+                        },
+                        result={
+                            "file_written": True,
+                            "consent_status": "granted",
+                            "file_path": str(path),
+                        },
+                        tags={
+                            "tool_type": "file_operation",
+                            "operation": "consent_persistence",
+                            "file_operation": "write",
+                            "consent_status": "granted",
+                        },
+                    )
+            except Exception:
+                pass  # Continue without observability if it fails
+
         print(colored("Thank you️", "light_green"))
         print()
         print(

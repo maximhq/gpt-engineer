@@ -5,12 +5,28 @@ services:
       dockerfile: docker/Dockerfile
     stdin_open: true
     tty: true
+    ports:
+      - "5001:5001"
     # Set the API key from the .env file
     env_file:
       - .env
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
     ##  OR set the API key directly
     # environment:
       # - OPENAI_API_KEY=YOUR_API_KEY
     image: gpt-engineer
     volumes:
       - ./projects/example:/project
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Restart policy
+    restart: unless-stopped
